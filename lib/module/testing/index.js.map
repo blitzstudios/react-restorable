@@ -1,0 +1,1 @@
+{"version":3,"names":["hasRestorableStateForTests","resetRestorationForTests","restorableStateSizeForTests","seedRestorableStateForTests","scrollOffsetsForTests"],"sourceRoot":"../../../src","sources":["testing/index.ts"],"mappings":";;AAAA,SACEA,0BAA0B,EAC1BC,wBAAwB,EACxBC,2BAA2B,EAC3BC,2BAA2B,QACtB,wBAAqB;AAC5B,SAASC,qBAAqB,QAAQ,uCAAoC","ignoreList":[]}

@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-restorable/react-native",
+  "private": true,
+  "main": "../lib/module/react-native/index.js",
+  "module": "../lib/module/react-native/index.js",
+  "types": "../lib/typescript/module/react-native/index.d.ts"
+}

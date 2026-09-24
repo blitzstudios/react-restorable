@@ -1,0 +1,6 @@
+{
+  "name": "@sleeperhq/react-restorable/babel",
+  "private": true,
+  "main": "../lib/commonjs/babel/index.js",
+  "types": "../lib/typescript/commonjs/babel/index.d.ts"
+}

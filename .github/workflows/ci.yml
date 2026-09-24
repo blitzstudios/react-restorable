@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          # Off because it probes `yarn cache dir` inside this step, which is before corepack is on
+          # -- so it runs the runner's global yarn 1 against a `packageManager` field it refuses.
+          package-manager-cache: false
+
+      # yarn comes from `packageManager`, so corepack has to be on before any yarn command.
+      - run: corepack enable
+
+      - run: yarn install --immutable
+
+      # Both builds, since a consumer's release bundle runs with `__DEV__` false.
+      - run: yarn test
+      - run: yarn test:prod
+
+      # Also typechecks: `build` is `yarn typecheck && bob build`.
+      #
+      # Retried because bob builds its targets with Promise.all, and the commonjs target validates
+      # the `main` field -- which points into lib/module -- so it fails whenever it happens to
+      # finish before the module target has written that file. Nothing to fix on our side short of
+      # repointing `main` at the commonjs output, which would change what bundlers resolve.
+      - name: build
+        run: |
+          for attempt in 1 2 3; do
+            if yarn build; then exit 0; fi
+            echo "::warning::build attempt $attempt failed; retrying (known bob target race)"
+          done
+          exit 1
+
+      # `lib/` is committed and nothing rebuilds it on the consumer's side: `prepublishOnly` never
+      # fires for a git dependency, and `package.json` points main/module at `./lib/module`. A tag
+      # cut from a stale `lib/` ships the old code while every source-level check above still
+      # passes, so the build output has to be diffed too.
+      - name: lib/ matches src/
+        run: |
+          # --intent-to-add so a brand new source file's missing output counts as a difference;
+          # plain `git diff` says nothing about untracked files.
+          git add --intent-to-add -A lib
+          if ! git diff --quiet -- lib; then
+            echo "::error::lib/ does not match src/. Run 'yarn build' and commit the result."
+            git diff --stat -- lib
+            exit 1
+          fi

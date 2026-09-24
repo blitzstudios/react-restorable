@@ -1,0 +1,7 @@
+{
+  "name": "@sleeperhq/react-restorable/react-navigation",
+  "private": true,
+  "main": "../lib/module/react-navigation/index.js",
+  "module": "../lib/module/react-navigation/index.js",
+  "types": "../lib/typescript/module/react-navigation/index.d.ts"
+}

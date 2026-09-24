@@ -1,0 +1,1 @@
+{"version":3,"names":["collectLiveRouteKeys","computeRestorationScope","useReactNavigationRestorationScope"],"sourceRoot":"../../../src","sources":["react-navigation/index.ts"],"mappings":";;AAAA,SAASA,oBAAoB,EAAEC,uBAAuB,EAAEC,kCAAkC,QAAQ,YAAS","ignoreList":[]}
