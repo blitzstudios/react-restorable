@@ -24,6 +24,11 @@ export declare function getRestorationStats(): {
 /** The call sites whose restores most often brought back something other than the initial value. */
 export declare function getRestoredChangedSites(limit?: number): [string, number][];
 /**
+ * Logs one line of what restoration has done so far, and the call sites whose restores brought back something
+ * other than their initial value. Only while debug reporting is on, and only once something has happened.
+ */
+export declare function reportRestorationStats(): void;
+/**
  * The scope to key by, or null when this component must not restore at all. Owns the key's entry in
  * `store`: forgotten when the component is removed or the key is contended, and handed to `onDetach`
  * when it is hidden or evicted, with the generation to write under.

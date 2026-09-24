@@ -42,7 +42,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.1.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.2.0-gitpkg"
 ```
 
 ## Setup
@@ -76,16 +76,23 @@ setRestorationEnabled(readYourFlagOnce());
 
 Off, a frame calls no hooks and hands each hook its own argument back, so the transform costs close to nothing.
 
-**3. Where you evict**, mark the root in a layout effect, which runs before the unmounted tree's cleanups:
+**3. Where you evict**, in the component that decides whether the root's tree is mounted:
 
 ```tsx
-useLayoutEffect(() => {
-  if (isEvicted) markEvicted(tabKey);
-}, [isEvicted, tabKey]);
+useEvictionLifecycle(tabKey, {
+  isEvicted,                               // what actually unmounts the tree, this render
+  expireAfterMs: 5 * 60 * 1000,            // how long an evicted root keeps what it left
+  shouldKeep: () => isParkedMidTask,       // optional: keep state past the expiry
+  onExpire: () => discardSnapshot(tabKey), // optional: drop whatever else you hold for it
+});
 ```
 
-Forget what a root holds once continuity should end, with `forgetRestorableState(tabKey)`, and drop what has gone
-stale as navigation moves with `pruneRestorableState(collectLiveRouteKeys(tabNavigatorState))`.
+It marks the eviction in the layout phase, before the unmounted tree's cleanups, which is how they tell an eviction
+from a removal; a mark from an ordinary effect lands too late and nothing restores. The expiry is checked on the way
+back in as well as on a timer, since timers do not run while the app is backgrounded. The lower-level
+`markEvicted` and `forgetRestorableState` are there for a host that cannot use the hook.
+
+Drop what has gone stale as navigation moves with `pruneRestorableState(collectLiveRouteKeys(tabNavigatorState))`.
 
 **4. Scroll positions**, by wrapping each scrollable once:
 
@@ -107,10 +114,11 @@ is long enough to scroll to the offset, then applies it.
 | `useRestorationFrame(id)` / `useAutoState(id, initial)` | the frame the transform injects, and its single-`useState` form |
 | `RestorationNamespace` | tells apart sibling renders of one component |
 | `RestorationHiddenBoundary` | marks a subtree an `<Activity>` hides |
-| `markEvicted(root)`, `forgetRestorableState(root)`, `pruneRestorableState(liveKeysByRoot)` | the lifetime of what is kept |
+| `useEvictionLifecycle(root, options)` | marks a root evicted as its tree unmounts, and forgets what it left once it has been away too long |
+| `markEvicted(root)`, `forgetRestorableState(root)`, `pruneRestorableState(liveKeysByRoot)` | the lifetime of what is kept, by hand |
 | `configureRestorationScope(useScope)`, `setRestorationEnabled(on)` | setup, once, before the first render |
 | `getRestorationStats()`, `getRestoredChangedSites()` | what restored, and which call sites brought back something other than their initial value — the measure of whether the transform earns its keep |
-| `setRestorationDebugEnabled(on)` | console reporting of refusals and misses |
+| `setRestorationDebugEnabled(on)`, `reportRestorationStats()` | console reporting of refusals and misses, and a one-line summary with the call sites whose restores mattered |
 
 | entry | holds |
 | --- | --- |

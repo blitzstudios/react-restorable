@@ -4,6 +4,7 @@ import {
   RestorableEntry,
   UNANCHORED_SCOPE_PREFIX,
   getDetachReason,
+  getIsRestorationDebugEnabled,
   getIsRestorationEnabled,
   getRestorationGeneration,
   readRestorable,
@@ -132,6 +133,23 @@ export function getRestoredChangedSites(limit = 20) {
   return Array.from(restoredChangedSites.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit);
+}
+
+/**
+ * Logs one line of what restoration has done so far, and the call sites whose restores brought back something
+ * other than their initial value. Only while debug reporting is on, and only once something has happened.
+ */
+export function reportRestorationStats() {
+  if (!getIsRestorationDebugEnabled()) return;
+  const s = getRestorationStats();
+  if (s.restored === 0 && s.refusedUnanchored === 0 && s.refusedContended === 0 && s.evicted === 0) return;
+  // eslint-disable-next-line no-console
+  console.log(
+    `[restore-stats] restored=${s.restored} changed=${s.restoredChanged} changedSites=${s.restoredChangedSitesDistinct} missed=${s.missed} manualOk=${s.manualRestored} manualMiss=${s.manualMissed} pruned=${s.pruned} unanchored=${s.refusedUnanchored} contended=${s.refusedContended} evicted=${s.evicted} values=${s.values} live=${s.live}`,
+  );
+  const topSites = getRestoredChangedSites(10);
+  // eslint-disable-next-line no-console
+  if (topSites.length > 0) console.log(`[restore-changed-sites] ${topSites.map(([site, count]) => `${site}=${count}`).join(' ')}`);
 }
 
 /** Registers one live holder of `key`, marking it contended when there is already another. */
