@@ -22,7 +22,7 @@ beforeEach(() => {
 
 function evict({ shouldKeep, onExpire = jest.fn(), enabled = true }: { shouldKeep?: () => boolean; onExpire?: jest.Mock; enabled?: boolean } = {}) {
   const view = renderHook(
-    ({ isEvicted }: { isEvicted: boolean }) => useEvictionLifecycle('tab-fantasy', { isEvicted, expireAfterMs: EXPIRY_MS, enabled, shouldKeep, onExpire }),
+    ({ isEvicted }: { isEvicted: boolean }) => useEvictionLifecycle('tab-fantasy', { evict: isEvicted, expireAfterMs: EXPIRY_MS, enabled, shouldKeep, onExpire }),
     { initialProps: { isEvicted: false } },
   );
   return { ...view, onExpire };
@@ -37,7 +37,7 @@ describe('useEvictionLifecycle', () => {
       return <Text testID="draft">{draft}</Text>;
     }
     function Tab({ isEvicted }: { isEvicted: boolean }) {
-      useEvictionLifecycle('tab-1', { isEvicted, expireAfterMs: EXPIRY_MS });
+      useEvictionLifecycle('tab-1', { evict: isEvicted, expireAfterMs: EXPIRY_MS });
       return isEvicted ? null : <Draft />;
     }
     const tree = (isEvicted: boolean) => (

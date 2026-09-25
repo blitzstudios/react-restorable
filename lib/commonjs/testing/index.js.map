@@ -1,1 +1,1 @@
-{"version":3,"names":["_restorable_state","require","_scroll_restoration"],"sourceRoot":"../../../src","sources":["testing/index.ts"],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAAA,IAAAA,iBAAA,GAAAC,OAAA;AAMA,IAAAC,mBAAA,GAAAD,OAAA","ignoreList":[]}
+{"version":3,"names":["_restorable_state","require","_scroll_restoration","_snapshots"],"sourceRoot":"../../../src","sources":["testing/index.ts"],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAAA,IAAAA,iBAAA,GAAAC,OAAA;AAMA,IAAAC,mBAAA,GAAAD,OAAA;AACA,IAAAE,UAAA,GAAAF,OAAA","ignoreList":[]}

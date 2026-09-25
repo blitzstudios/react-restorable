@@ -19,6 +19,28 @@ export function InTab({ children }: { children: React.ReactNode }) {
 
 type Wrapper = (props: { children: React.ReactNode }) => React.ReactElement | null;
 
+const mounted = new Set<ReactTestRenderer>();
+
+/** Unmounts whatever a test left mounted, so its timers cannot keep the run alive or leak into the next test. */
+afterEach(() => {
+  act(() => mounted.forEach((root) => root.unmount()));
+  mounted.clear();
+});
+
+function mount(element: React.ReactElement) {
+  let root!: ReactTestRenderer;
+  act(() => {
+    root = create(element);
+  });
+  mounted.add(root);
+  return root;
+}
+
+function unmountRoot(root: ReactTestRenderer) {
+  if (!mounted.delete(root)) return;
+  act(() => root.unmount());
+}
+
 export function renderHook<Result, Props = undefined>(
   hook: (props: Props) => Result,
   { wrapper: Wrap, initialProps }: { wrapper?: Wrapper; initialProps?: Props } = {},
@@ -30,25 +52,19 @@ export function renderHook<Result, Props = undefined>(
   }
   const element = (props: Props) => (Wrap ? <Wrap><Probe props={props} /></Wrap> : <Probe props={props} />);
 
-  let root: ReactTestRenderer;
-  act(() => {
-    root = create(element(initialProps as Props));
-  });
+  const root = mount(element(initialProps as Props));
   return {
     result,
     rerender: (props: Props) => act(() => root.update(element(props))),
-    unmount: () => act(() => root.unmount()),
+    unmount: () => unmountRoot(root),
   };
 }
 
 export function render(element: React.ReactElement) {
-  let root: ReactTestRenderer;
-  act(() => {
-    root = create(element);
-  });
+  const root = mount(element);
   return {
     rerender: (next: React.ReactElement) => act(() => root.update(next)),
-    unmount: () => act(() => root.unmount()),
+    unmount: () => unmountRoot(root),
     textOf: (testID: string) => root.root.findByProps({ testID }).props.children,
   };
 }

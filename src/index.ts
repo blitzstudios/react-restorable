@@ -24,4 +24,6 @@ export {
 } from './auto_restorable';
 export type { RestorationFrameApi } from './auto_restorable';
 export { useEvictionLifecycle } from './eviction_lifecycle';
-export type { EvictionLifecycleOptions } from './eviction_lifecycle';
+export type { EvictionLifecycle, EvictionLifecycleOptions } from './eviction_lifecycle';
+export { configureRestorationSnapshots, discardRestorationSnapshots } from './snapshots';
+export type { SnapshotCapture } from './snapshots';

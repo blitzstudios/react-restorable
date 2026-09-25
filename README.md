@@ -42,7 +42,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.2.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.3.0-gitpkg"
 ```
 
 ## Setup
@@ -79,13 +79,16 @@ Off, a frame calls no hooks and hands each hook its own argument back, so the tr
 **3. Where you evict**, in the component that decides whether the root's tree is mounted:
 
 ```tsx
-useEvictionLifecycle(tabKey, {
-  isEvicted,                               // what actually unmounts the tree, this render
-  expireAfterMs: 5 * 60 * 1000,            // how long an evicted root keeps what it left
-  shouldKeep: () => isParkedMidTask,       // optional: keep state past the expiry
-  onExpire: () => discardSnapshot(tabKey), // optional: drop whatever else you hold for it
+const { isEvicted } = useEvictionLifecycle(tabKey, {
+  evict: isLeaving,                  // whether the root should go
+  expireAfterMs: 5 * 60 * 1000,      // how long an evicted root keeps what it left
+  shouldKeep: () => isParkedMidTask, // optional: keep state past the expiry
 });
+
+return isEvicted ? null : <TabContent />;
 ```
+
+Unmount on `isEvicted`, not on your own flag: a snapshot, below, holds the unmount until its picture is taken.
 
 It marks the eviction in the layout phase, before the unmounted tree's cleanups, which is how they tell an eviction
 from a removal; a mark from an ordinary effect lands too late and nothing restores. The expiry is checked on the way
@@ -94,7 +97,28 @@ back in as well as on a timer, since timers do not run while the app is backgrou
 
 Drop what has gone stale as navigation moves with `pruneRestorableState(collectLiveRouteKeys(tabNavigatorState))`.
 
-**4. Scroll positions**, by wrapping each scrollable once:
+**4. Optionally, a picture over the rebuild.** Experimental. Restored state lands the tree where it was left, but it
+still has to render, so the root can be photographed on the way out and covered with the picture while it rebuilds:
+
+```tsx
+// once, at launch
+configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
+
+// where you evict
+const { isEvicted, snapshotUri } = useEvictionLifecycle(tabKey, {
+  evict: isLeaving,
+  expireAfterMs: 5 * 60 * 1000,
+  snapshot: { place: activeRouteKey, viewRef: contentRef }, // where in the root the picture was taken
+});
+```
+
+Render `snapshotUri` over the root whenever it is set, and keep that overlay mounted for the whole eviction: a switch that
+animates on the UI thread starts before a newly mounted image paints. The picture is this eviction's, never an older
+one, and never one of a place the root has since left; it holds for 600ms after the return, and goes with the rest
+of the root's state at the expiry. Capture is injected, so the package takes no native dependency — the example uses
+`react-native-view-shot`. `discardRestorationSnapshots(root)` drops a root's pictures by hand.
+
+**5. Scroll positions**, by wrapping each scrollable once:
 
 ```ts
 import { withScrollRestoration } from '@sleeperhq/react-restorable/react-native';
@@ -114,7 +138,8 @@ is long enough to scroll to the offset, then applies it.
 | `useRestorationFrame(id)` / `useAutoState(id, initial)` | the frame the transform injects, and its single-`useState` form |
 | `RestorationNamespace` | tells apart sibling renders of one component |
 | `RestorationHiddenBoundary` | marks a subtree an `<Activity>` hides |
-| `useEvictionLifecycle(root, options)` | marks a root evicted as its tree unmounts, and forgets what it left once it has been away too long |
+| `useEvictionLifecycle(root, options)` | when a root's tree unmounts, the eviction mark its state depends on, when what it left is forgotten, and optionally the picture over its rebuild |
+| `configureRestorationSnapshots(capture)`, `discardRestorationSnapshots(root)` | experimental: how pictures are taken and deleted, and dropping a root's pictures by hand |
 | `markEvicted(root)`, `forgetRestorableState(root)`, `pruneRestorableState(liveKeysByRoot)` | the lifetime of what is kept, by hand |
 | `configureRestorationScope(useScope)`, `setRestorationEnabled(on)` | setup, once, before the first render |
 | `getRestorationStats()`, `getRestoredChangedSites()` | what restored, and which call sites brought back something other than their initial value — the measure of whether the transform earns its keep |

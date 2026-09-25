@@ -1,6 +1,6 @@
 {
   "name": "@sleeperhq/react-restorable",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "State that survives its tree being unmounted: a component's useState and a list's scroll position come back when the screen that held them is rebuilt.",
   "repository": {
     "type": "git",
