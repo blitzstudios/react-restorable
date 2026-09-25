@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { reportRestorationStats } from './auto_restorable';
 import { forgetRestorableState, markEvicted } from './restorable_state';
 import {
   Snapshot,
@@ -119,6 +120,14 @@ function useMarkAndExpire(
     const timer = setTimeout(expire, expireAfterMs);
     return () => clearTimeout(timer);
   }, [enabled, isEvicted, rootKey, expireAfterMs]);
+
+  // A return is the one moment restoration does anything. This runs after the returning tree's effects, so its restores are counted.
+  const hasBeenEvictedRef = useRef(false);
+  useEffect(() => {
+    if (!enabled) return;
+    if (isEvicted) hasBeenEvictedRef.current = true;
+    else if (hasBeenEvictedRef.current) reportRestorationStats();
+  }, [enabled, isEvicted]);
 }
 
 /**

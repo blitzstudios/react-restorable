@@ -1,1 +1,1 @@
-{"version":3,"names":["withScrollRestoration"],"sourceRoot":"../../../src","sources":["react-native/index.ts"],"mappings":";;AAAA,SAASA,qBAAqB,QAAQ,yBAAsB","ignoreList":[]}
+{"version":3,"names":["withScrollRestoration","EvictionGate","Evictable","useIsEvicted"],"sourceRoot":"../../../src","sources":["react-native/index.ts"],"mappings":";;AAAA,SAASA,qBAAqB,QAAQ,yBAAsB;AAC5D,SAASC,YAAY,EAAEC,SAAS,EAAEC,YAAY,QAAQ,gBAAa","ignoreList":[]}

@@ -30,7 +30,8 @@ afterEach(() => {
 function mount(element: React.ReactElement) {
   let root!: ReactTestRenderer;
   act(() => {
-    root = create(element);
+    // Gives each host element a ref, as a real renderer would, so a snapshot has a view to photograph.
+    root = create(element, { createNodeMock: (node) => ({ hostType: node.type }) });
   });
   mounted.add(root);
   return root;
@@ -66,6 +67,8 @@ export function render(element: React.ReactElement) {
     rerender: (next: React.ReactElement) => act(() => root.update(next)),
     unmount: () => unmountRoot(root),
     textOf: (testID: string) => root.root.findByProps({ testID }).props.children,
+    queryByTestId: (testID: string) => root.root.findAll((node) => node.props.testID === testID)[0],
+    findAllByType: (type: string) => root.root.findAll((node) => node.type === type),
   };
 }
 

@@ -234,6 +234,30 @@ describe('reportRestorationStats', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
+  it('reports once a root comes back, and not on its first mount or its departure', () => {
+    restoreOnce();
+    setRestorationDebugEnabled(true);
+    log.mockClear();
+
+    const { rerender } = evict();
+    rerender({ isEvicted: true });
+    expect(log).not.toHaveBeenCalled();
+
+    rerender({ isEvicted: false });
+    expect(log.mock.calls[0][0]).toMatch(/^\[restore-stats\] /);
+  });
+
+  it('reports nothing for a root that is not enabled', () => {
+    restoreOnce();
+    setRestorationDebugEnabled(true);
+    log.mockClear();
+
+    const { rerender } = evict({ enabled: false });
+    rerender({ isEvicted: true });
+    rerender({ isEvicted: false });
+    expect(log).not.toHaveBeenCalled();
+  });
+
   it('reports the counters and the call sites whose restores mattered', () => {
     restoreOnce();
     setRestorationDebugEnabled(true);

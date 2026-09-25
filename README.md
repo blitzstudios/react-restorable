@@ -42,7 +42,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.3.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.4.0-gitpkg"
 ```
 
 ## Setup
@@ -76,24 +76,32 @@ setRestorationEnabled(readYourFlagOnce());
 
 Off, a frame calls no hooks and hands each hook its own argument back, so the transform costs close to nothing.
 
-**3. Where you evict**, in the component that decides whether the root's tree is mounted:
+**3. Where you evict**, wrap the root's content:
 
 ```tsx
-const { isEvicted } = useEvictionLifecycle(tabKey, {
-  evict: isLeaving,                  // whether the root should go
-  expireAfterMs: 5 * 60 * 1000,      // how long an evicted root keeps what it left
-  shouldKeep: () => isParkedMidTask, // optional: keep state past the expiry
-});
+import { Evictable } from '@sleeperhq/react-restorable/react-native';
 
-return isEvicted ? null : <TabContent />;
+<Evictable
+  rootKey={tabKey}
+  evict={isLeaving}                  // whether the root should go
+  expireAfterMs={5 * 60 * 1000}      // how long an evicted root keeps what it left
+  shouldKeep={() => isParkedMidTask} // optional: keep state past the expiry
+>
+  <TabContent />
+</Evictable>
 ```
 
-Unmount on `isEvicted`, not on your own flag: a snapshot, below, holds the unmount until its picture is taken.
+It unmounts its children while evicted and marks the eviction as they go, in the layout phase, before their
+cleanups: that is how they tell an eviction from a removal. The expiry is checked on the way back in as well as on a
+timer, since timers do not run while the app is backgrounded.
 
-It marks the eviction in the layout phase, before the unmounted tree's cleanups, which is how they tell an eviction
-from a removal; a mark from an ordinary effect lands too late and nothing restores. The expiry is checked on the way
-back in as well as on a timer, since timers do not run while the app is backgrounded. The lower-level
-`markEvicted` and `forgetRestorableState` are there for a host that cannot use the hook.
+**When the children must stay mounted** — a navigator, whose state goes with it — pass `unmountChildren={false}` and
+unmount the content deeper down with `<EvictionGate>`, or with `useIsEvicted()` in a component that already decides
+whether its content renders. In development, an `<Evictable>` evicted with nothing inside reading it warns, because
+nothing unmounted.
+
+`useEvictionLifecycle` is the same lifecycle as a hook, for a host that renders its own view and overlay; it returns
+`isEvicted`, which is what to unmount on. `markEvicted` and `forgetRestorableState` are the pieces underneath.
 
 Drop what has gone stale as navigation moves with `pruneRestorableState(collectLiveRouteKeys(tabNavigatorState))`.
 
@@ -104,19 +112,16 @@ still has to render, so the root can be photographed on the way out and covered 
 // once, at launch
 configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
 
-// where you evict
-const { isEvicted, snapshotUri } = useEvictionLifecycle(tabKey, {
-  evict: isLeaving,
-  expireAfterMs: 5 * 60 * 1000,
-  snapshot: { place: activeRouteKey, viewRef: contentRef }, // where in the root the picture was taken
-});
+// where you evict: `place` is where in the root the picture is taken
+<Evictable rootKey={tabKey} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: activeRouteKey }}>
 ```
 
-Render `snapshotUri` over the root whenever it is set, and keep that overlay mounted for the whole eviction: a switch that
-animates on the UI thread starts before a newly mounted image paints. The picture is this eviction's, never an older
-one, and never one of a place the root has since left; it holds for 600ms after the return, and goes with the rest
-of the root's state at the expiry. Capture is injected, so the package takes no native dependency — the example uses
-`react-native-view-shot`. `discardRestorationSnapshots(root)` drops a root's pictures by hand.
+`<Evictable>` photographs the view holding its children and draws the picture over them, in place for the whole
+eviction, since a switch that animates on the UI thread starts before a newly mounted image paints. The picture is this
+eviction's, never an older one, and never one of a place the root has since left; it holds for 600ms after the return,
+and goes with the rest of the root's state at the expiry. Capture is injected, so the package takes no native
+dependency for it — the example uses `react-native-view-shot`. `discardRestorationSnapshots(root)` drops a root's
+pictures by hand.
 
 **5. Scroll positions**, by wrapping each scrollable once:
 
@@ -138,18 +143,19 @@ is long enough to scroll to the offset, then applies it.
 | `useRestorationFrame(id)` / `useAutoState(id, initial)` | the frame the transform injects, and its single-`useState` form |
 | `RestorationNamespace` | tells apart sibling renders of one component |
 | `RestorationHiddenBoundary` | marks a subtree an `<Activity>` hides |
+| `<Evictable>`, `<EvictionGate>`, `useIsEvicted()` | an evictable root, and what unmounts inside one whose children stay mounted |
 | `useEvictionLifecycle(root, options)` | when a root's tree unmounts, the eviction mark its state depends on, when what it left is forgotten, and optionally the picture over its rebuild |
 | `configureRestorationSnapshots(capture)`, `discardRestorationSnapshots(root)` | experimental: how pictures are taken and deleted, and dropping a root's pictures by hand |
 | `markEvicted(root)`, `forgetRestorableState(root)`, `pruneRestorableState(liveKeysByRoot)` | the lifetime of what is kept, by hand |
 | `configureRestorationScope(useScope)`, `setRestorationEnabled(on)` | setup, once, before the first render |
 | `getRestorationStats()`, `getRestoredChangedSites()` | what restored, and which call sites brought back something other than their initial value — the measure of whether the transform earns its keep |
-| `setRestorationDebugEnabled(on)`, `reportRestorationStats()` | console reporting of refusals and misses, and a one-line summary with the call sites whose restores mattered |
+| `setRestorationDebugEnabled(on)`, `reportRestorationStats()` | console reporting of refusals and misses, and a one-line summary with the call sites whose restores mattered — printed on its own each time a root returns |
 
 | entry | holds |
 | --- | --- |
 | `@sleeperhq/react-restorable` | everything above; React only |
 | `…/react-navigation` | `useReactNavigationRestorationScope`, `computeRestorationScope`, `collectLiveRouteKeys` |
-| `…/react-native` | `withScrollRestoration` |
+| `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
 | `…/babel` | the transform |
 | `…/testing` | seeding and resetting the stores, for a consumer's own tests |
 
