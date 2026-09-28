@@ -2,8 +2,8 @@ import React from 'react';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/core';
 import { act } from 'react-test-renderer';
 import { useAutoState } from '../auto_restorable';
-import { configureRestorationScope, markEvicted, resetRestorationForTests } from '../restorable_state';
-import { collectLiveRouteKeys, computeRestorationScope, useReactNavigationRestorationScope } from '../react-navigation';
+import { configureRestorationScope, hasRestorableStateForTests, markEvicted, resetRestorationForTests, seedRestorableStateForTests } from '../restorable_state';
+import { collectLiveRouteKeys, computeRestorationScope, usePruneRestorableState, useReactNavigationRestorationScope } from '../react-navigation';
 import { renderHook, useTestScope } from './render';
 
 // The package ships ES modules only, and the adapter reads nothing from it but these two contexts.
@@ -141,5 +141,28 @@ describe('collectLiveRouteKeys', () => {
       ],
     });
     expect(live).toEqual({ 'tab-fantasy': ['tab-fantasy', 'index-1', 'detail-1', 'inner-1'], 'tab-scores': ['tab-scores'] });
+  });
+});
+
+describe('usePruneRestorableState', () => {
+  beforeEach(resetRestorationForTests);
+
+  const parkedOnLeague = { routes: [{ key: 'tab-fantasy', state: { routes: [{ key: 'index-1' }, { key: 'detail-1' }] } }] };
+  const backAtIndex = { routes: [{ key: 'tab-fantasy', state: { routes: [{ key: 'index-1' }, { key: 'detail-2' }] } }] };
+
+  it('drops state whose anchor route has left its tab', () => {
+    seedRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab', 'players');
+    const view = renderHook(({ state }) => usePruneRestorableState(state), { initialProps: { state: parkedOnLeague } });
+    expect(hasRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab')).toBe(true);
+
+    view.rerender({ state: backAtIndex });
+    expect(hasRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab')).toBe(false);
+  });
+
+  it('prunes nothing while disabled', () => {
+    seedRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab', 'players');
+    const view = renderHook(({ state }) => usePruneRestorableState(state, false), { initialProps: { state: parkedOnLeague } });
+    view.rerender({ state: backAtIndex });
+    expect(hasRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab')).toBe(true);
   });
 });

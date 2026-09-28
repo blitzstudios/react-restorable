@@ -15,7 +15,7 @@ import type { PluginObj, types as BabelTypes } from '@babel/core';
  * Opt a call or element out with `// @no-restore` on its line or the line above.
  */
 export type RestorableBabelOptions = {
-    /** Where `useRestorationFrame` is imported from, and the import that marks a file as restoring its own state. */
+    /** Where `useRestorationFrame` is imported from. A file importing `useRestorableState` from it is left alone. */
     runtimeModule?: string;
     /** A file is rewritten only when its path contains one of these. Unset, every file outside `node_modules` is. */
     include?: string[];

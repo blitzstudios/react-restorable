@@ -1,6 +1,6 @@
-import { useContext, useMemo } from 'react';
+import { useContext, useLayoutEffect, useMemo } from 'react';
 import { NavigationContext, NavigationRouteContext } from '@react-navigation/core';
-import { UNANCHORED_SCOPE_PREFIX } from '../restorable_state';
+import { UNANCHORED_SCOPE_PREFIX, pruneRestorableState } from '../restorable_state';
 
 /**
  * Scopes restoration to where a component sits in React Navigation. The root is the focused route of
@@ -113,6 +113,20 @@ export function useReactNavigationRestorationScope() {
   const navigation = useContext(NavigationContext) as NavLike | undefined;
   const routeKey = (useContext(NavigationRouteContext) as NavRoute | undefined)?.key;
   return useMemo(() => computeRestorationScope(collectStates(navigation, routeKey)), [navigation, routeKey]);
+}
+
+/**
+ * Drops restorable state whose anchor route is no longer reachable under its tab, whenever the tab navigator's
+ * routes change. Pass the tab navigator's state; off, nothing is pruned.
+ */
+export function usePruneRestorableState(tabState: Parameters<typeof collectLiveRouteKeys>[0], enabled = true) {
+  const liveKeys = useMemo(() => (enabled ? collectLiveRouteKeys(tabState) : undefined), [tabState, enabled]);
+  // The contents, since the state object changes identity on every navigation whether or not a route came or went.
+  const signature = liveKeys ? JSON.stringify(liveKeys) : '';
+  useLayoutEffect(() => {
+    if (liveKeys) pruneRestorableState(liveKeys);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
 }
 
 /**

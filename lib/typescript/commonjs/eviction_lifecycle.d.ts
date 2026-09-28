@@ -26,6 +26,8 @@ export type EvictionLifecycle = {
     isEvicted: boolean;
     /** The picture to cover the root with, while it is evicted and for a moment after it returns. */
     snapshotUri: string | undefined;
+    /** Expires the root now if it is evicted, as the expiry would: for a trigger of the host's own, such as the app backgrounding. Stable. */
+    expire: () => void;
 };
 /**
  * The lifecycle of an evictable root: when its tree actually unmounts, the eviction mark its restorable state depends

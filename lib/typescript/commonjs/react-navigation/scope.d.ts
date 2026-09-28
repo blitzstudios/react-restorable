@@ -29,6 +29,11 @@ export declare function computeRestorationScope(states: readonly (NavState | und
  */
 export declare function useReactNavigationRestorationScope(): string;
 /**
+ * Drops restorable state whose anchor route is no longer reachable under its tab, whenever the tab navigator's
+ * routes change. Pass the tab navigator's state; off, nothing is pruned.
+ */
+export declare function usePruneRestorableState(tabState: Parameters<typeof collectLiveRouteKeys>[0], enabled?: boolean): void;
+/**
  * Every route key still reachable under each tab, the tab's own key first — what `pruneRestorableState`
  * takes. Every reachable route rather than the focused path: a screen pushed over another does not invalidate it.
  */

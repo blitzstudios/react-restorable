@@ -42,7 +42,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.4.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.5.0-gitpkg"
 ```
 
 ## Setup
@@ -61,8 +61,8 @@ plugins: [
 ],
 ```
 
-Opt a call out with `// @no-restore` on its line or the line above. A file that imports the package itself is left
-alone, on the grounds that it manages its own restoration.
+Opt a call out with `// @no-restore` on its line or the line above. A file that imports `useRestorableState` is left
+alone, on the grounds that it manages its own restoration; importing anything else from the package does not count.
 
 **2. Once, before anything renders**, because frames call hooks only while restoration is on:
 
@@ -86,6 +86,7 @@ import { Evictable } from '@sleeperhq/react-restorable/react-native';
   evict={isLeaving}                  // whether the root should go
   expireAfterMs={5 * 60 * 1000}      // how long an evicted root keeps what it left
   shouldKeep={() => isParkedMidTask} // optional: keep state past the expiry
+  expireOnBackground                 // optional: expire at once when the app backgrounds while evicted
 >
   <TabContent />
 </Evictable>
@@ -103,7 +104,12 @@ nothing unmounted.
 `useEvictionLifecycle` is the same lifecycle as a hook, for a host that renders its own view and overlay; it returns
 `isEvicted`, which is what to unmount on. `markEvicted` and `forgetRestorableState` are the pieces underneath.
 
-Drop what has gone stale as navigation moves with `pruneRestorableState(collectLiveRouteKeys(tabNavigatorState))`.
+`expireOnBackground` expires an evicted root the moment the app goes to the background, rather than waiting out
+`expireAfterMs`, since that is when the OS wants memory back. `inactive` does not count, so a transient blur keeps
+what the root left. The hook returns the same as `expire()`, for a trigger of the host's own.
+
+Drop what has gone stale as navigation moves with `usePruneRestorableState(tabNavigatorState)`, from
+`./react-navigation`, in the tab navigator.
 
 **4. Optionally, a picture over the rebuild.** Experimental. Restored state lands the tree where it was left, but it
 still has to render, so the root can be photographed on the way out and covered with the picture while it rebuilds:
@@ -154,7 +160,7 @@ is long enough to scroll to the offset, then applies it.
 | entry | holds |
 | --- | --- |
 | `@sleeperhq/react-restorable` | everything above; React only |
-| `…/react-navigation` | `useReactNavigationRestorationScope`, `computeRestorationScope`, `collectLiveRouteKeys` |
+| `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `computeRestorationScope`, `collectLiveRouteKeys` |
 | `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
 | `…/babel` | the transform |
 | `…/testing` | seeding and resetting the stores, for a consumer's own tests |

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Image, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { AppState, Image, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { EvictionLifecycleOptions, useEvictionLifecycle } from '../eviction_lifecycle';
 
 /** How many gates read an `<Evictable>`, so one whose children stay mounted can tell when nothing unmounts. */
@@ -16,6 +16,12 @@ export type EvictableProps = Omit<EvictionLifecycleOptions, 'snapshot'> & {
   unmountChildren?: boolean;
   /** Experimental. Photographs the content on the way out and covers its rebuild with the picture. */
   snapshot?: { place: string };
+  /**
+   * Expires the root as soon as the app goes to the background while it is evicted, rather than waiting out
+   * `expireAfterMs`: backgrounding is when the OS wants memory back. `inactive` does not count, so a transient
+   * blur — the app switcher, a permission sheet — keeps what the root left.
+   */
+  expireOnBackground?: boolean;
   /** The style of the view that holds the children, which is the view photographed. Fills the parent by default. */
   style?: StyleProp<ViewStyle>;
   children: React.ReactNode;
@@ -25,12 +31,20 @@ export type EvictableProps = Omit<EvictionLifecycleOptions, 'snapshot'> & {
  * A root that can be evicted: its content unmounts while `evict` is on, and comes back as it was left. Owns when the
  * content actually unmounts, the eviction mark its restorable state depends on, the expiry, and the snapshot.
  */
-export function Evictable({ rootKey, unmountChildren = true, snapshot, style, children, ...options }: EvictableProps) {
+export function Evictable({ rootKey, unmountChildren = true, snapshot, expireOnBackground = false, style, children, ...options }: EvictableProps) {
   const contentRef = useRef<View | null>(null);
-  const { isEvicted, snapshotUri } = useEvictionLifecycle(rootKey, {
+  const { isEvicted, snapshotUri, expire } = useEvictionLifecycle(rootKey, {
     ...options,
     snapshot: snapshot ? { place: snapshot.place, viewRef: contentRef } : undefined,
   });
+
+  useEffect(() => {
+    if (!expireOnBackground) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background') expire();
+    });
+    return () => subscription.remove();
+  }, [expireOnBackground, expire]);
 
   const [registry] = useState<GateRegistry>(() => ({ count: 0, hasWarned: false }));
   useEffect(() => {

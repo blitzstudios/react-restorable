@@ -18,7 +18,7 @@ import type { NodePath, PluginObj, types as BabelTypes } from '@babel/core';
  */
 
 export type RestorableBabelOptions = {
-  /** Where `useRestorationFrame` is imported from, and the import that marks a file as restoring its own state. */
+  /** Where `useRestorationFrame` is imported from. A file importing `useRestorableState` from it is left alone. */
   runtimeModule?: string;
   /** A file is rewritten only when its path contains one of these. Unset, every file outside `node_modules` is. */
   include?: string[];
@@ -99,8 +99,16 @@ function isScrollableElement(nodePath: NodePath<BabelTypes.JSXOpeningElement>, s
   return Boolean(init) && isScrollableValue(init, scrollables);
 }
 
+/** A file that restores state by hand, through `useRestorableState`, and must not have a second system reviving the same state. */
 function hasHandWrittenRestoration(programNode: BabelTypes.Program, runtimeModule: string) {
-  return programNode.body.some((node) => node.type === 'ImportDeclaration' && node.source.value === runtimeModule);
+  return programNode.body.some(
+    (node) =>
+      node.type === 'ImportDeclaration' &&
+      node.source.value === runtimeModule &&
+      node.specifiers.some(
+        (specifier) => specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier' && specifier.imported.name === 'useRestorableState',
+      ),
+  );
 }
 
 function toUnix(filename: string) {

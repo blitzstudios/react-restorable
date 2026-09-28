@@ -56,6 +56,19 @@ describe('restorable transform', () => {
     expect(output).not.toContain('react-restorable"');
   });
 
+  it('still rewrites a file that imports only the rest of the package', () => {
+    const output = transform(`
+      import { useState } from 'react';
+      import { RestorationNamespace } from '@sleeperhq/react-restorable';
+      export function Example() {
+        const [index] = useState(0);
+        return index;
+      }
+    `);
+
+    expect(output).toContain('_restore.state(0, useState(_restore.initial(0, 0)))');
+  });
+
   it('gives each function one frame, with a slot per call, and the same ids across runs', () => {
     const code = `
       import { useState } from 'react';

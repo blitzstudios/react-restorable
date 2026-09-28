@@ -2,16 +2,28 @@ import React, { useState } from 'react';
 import { act } from 'react-test-renderer';
 import { useAutoState } from '../auto_restorable';
 import { EvictionGate, Evictable, useIsEvicted } from '../react-native/evictable';
-import { resetRestorationForTests } from '../restorable_state';
-import { configureRestorationSnapshots, resetSnapshotCaptureForTests } from '../snapshots';
+import { hasRestorableStateForTests, resetRestorationForTests, seedRestorableStateForTests } from '../restorable_state';
+import { configureRestorationSnapshots, peekSnapshot, resetSnapshotCaptureForTests, seedSnapshotForTests } from '../snapshots';
 import { InTab, Text, render, renderHook } from './render';
+
+const mockAppStateListeners = new Set<(state: string) => void>();
 
 // Plain host elements stand in for React Native's, which cannot load outside a React Native runtime.
 jest.mock('react-native', () => ({
   View: 'View',
   Image: 'Image',
   StyleSheet: { absoluteFill: { position: 'absolute' }, create: <T,>(styles: T) => styles },
+  AppState: {
+    addEventListener: (_type: string, listener: (state: string) => void) => {
+      mockAppStateListeners.add(listener);
+      return { remove: () => mockAppStateListeners.delete(listener) };
+    },
+  },
 }));
+
+function setAppState(state: string) {
+  act(() => mockAppStateListeners.forEach((listener) => listener(state)));
+}
 
 const EXPIRY_MS = 5 * 60 * 1000;
 
@@ -144,6 +156,83 @@ describe('<Evictable>', () => {
       expect(view.findAllByType('Image')).toEqual([]);
       expect(capture).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('expireOnBackground', () => {
+  const SCOPE = 'tab-1|screen-1||';
+
+  const root = (evict: boolean, props: Partial<React.ComponentProps<typeof Evictable>> = {}) => (
+    <Evictable rootKey="tab-1" evict={evict} expireAfterMs={EXPIRY_MS} expireOnBackground {...props}>
+      <Text testID="content">content</Text>
+    </Evictable>
+  );
+
+  function seedBoth() {
+    seedRestorableStateForTests(SCOPE, 'subtab', 'players');
+    seedSnapshotForTests('tab-1', 'route-1', 'file:///tmp/tab.jpg');
+  }
+
+  it('forgets an evicted root, pictures included, as soon as the app backgrounds', () => {
+    const view = render(root(false));
+    view.rerender(root(true));
+    seedBoth();
+
+    setAppState('background');
+
+    expect(hasRestorableStateForTests(SCOPE, 'subtab')).toBe(false);
+    expect(peekSnapshot('tab-1', 'route-1')).toBeUndefined();
+  });
+
+  it('keeps the state of a root it is told to keep, and drops its pictures still', () => {
+    const view = render(root(false, { shouldKeep: () => true }));
+    view.rerender(root(true, { shouldKeep: () => true }));
+    seedBoth();
+
+    setAppState('background');
+
+    expect(hasRestorableStateForTests(SCOPE, 'subtab')).toBe(true);
+    expect(peekSnapshot('tab-1', 'route-1')).toBeUndefined();
+  });
+
+  it('keeps everything through a transient blur', () => {
+    const view = render(root(false));
+    view.rerender(root(true));
+    seedBoth();
+
+    setAppState('inactive');
+
+    expect(hasRestorableStateForTests(SCOPE, 'subtab')).toBe(true);
+    expect(peekSnapshot('tab-1', 'route-1')).toBeDefined();
+  });
+
+  it('leaves a root that is on screen alone', () => {
+    render(root(false));
+    seedBoth();
+
+    setAppState('background');
+
+    expect(hasRestorableStateForTests(SCOPE, 'subtab')).toBe(true);
+  });
+
+  it('does nothing unless asked, or while disabled', () => {
+    const off = render(root(false, { expireOnBackground: false }));
+    off.rerender(root(true, { expireOnBackground: false }));
+    const disabled = render(root(false, { enabled: false }));
+    disabled.rerender(root(true, { enabled: false }));
+    seedBoth();
+
+    setAppState('background');
+
+    expect(hasRestorableStateForTests(SCOPE, 'subtab')).toBe(true);
+    expect(peekSnapshot('tab-1', 'route-1')).toBeDefined();
+  });
+
+  it('stops listening once unmounted', () => {
+    const view = render(root(false));
+    expect(mockAppStateListeners.size).toBe(1);
+    view.unmount();
+    expect(mockAppStateListeners.size).toBe(0);
   });
 });
 

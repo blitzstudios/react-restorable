@@ -41,6 +41,8 @@ export type EvictionLifecycle = {
   isEvicted: boolean;
   /** The picture to cover the root with, while it is evicted and for a moment after it returns. */
   snapshotUri: string | undefined;
+  /** Expires the root now if it is evicted, as the expiry would: for a trigger of the host's own, such as the app backgrounding. Stable. */
+  expire: () => void;
 };
 
 /** Photographs the root on the way out, once per eviction, and reports the unmount as held until the picture lands. */
@@ -128,6 +130,14 @@ function useMarkAndExpire(
     if (isEvicted) hasBeenEvictedRef.current = true;
     else if (hasBeenEvictedRef.current) reportRestorationStats();
   }, [enabled, isEvicted]);
+
+  // Stable, and reads the latest render, so a host can hand it to a listener it subscribes once.
+  const latestRef = useRef({ enabled, isEvicted, expire });
+  latestRef.current = { enabled, isEvicted, expire };
+  const [expireIfEvicted] = useState(() => () => {
+    if (latestRef.current.enabled && latestRef.current.isEvicted) latestRef.current.expire();
+  });
+  return expireIfEvicted;
 }
 
 /**
@@ -186,8 +196,8 @@ export function useEvictionLifecycle(
   const isCapturing = useCaptureOnLeave(rootKey, place, snapshot?.viewRef, evict, isSnapshotEnabled);
   const isEvicted = evict && !isCapturing;
 
-  useMarkAndExpire(rootKey, isEvicted, { expireAfterMs, enabled, shouldKeep, onExpire });
+  const expire = useMarkAndExpire(rootKey, isEvicted, { expireAfterMs, enabled, shouldKeep, onExpire });
   const snapshotUri = useSnapshotToShow(rootKey, place, evict, isSnapshotEnabled, expireAfterMs);
 
-  return { isEvicted, snapshotUri };
+  return { isEvicted, snapshotUri, expire };
 }
