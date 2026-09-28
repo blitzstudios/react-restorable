@@ -3,7 +3,7 @@ import { NavigationContext, NavigationRouteContext } from '@react-navigation/cor
 import { act } from 'react-test-renderer';
 import { useAutoState } from '../auto_restorable';
 import { configureRestorationScope, hasRestorableStateForTests, markEvicted, resetRestorationForTests, seedRestorableStateForTests } from '../restorable_state';
-import { collectLiveRouteKeys, computeRestorationScope, usePruneRestorableState, useReactNavigationRestorationScope } from '../react-navigation';
+import { collectLiveRouteKeys, computeRestorationScope, getAnchorRouteKey, usePruneRestorableState, useReactNavigationRestorationScope } from '../react-navigation';
 import { renderHook, useTestScope } from './render';
 
 // The package ships ES modules only, and the adapter reads nothing from it but these two contexts.
@@ -164,5 +164,21 @@ describe('usePruneRestorableState', () => {
     const view = renderHook(({ state }) => usePruneRestorableState(state, false), { initialProps: { state: parkedOnLeague } });
     view.rerender({ state: backAtIndex });
     expect(hasRestorableStateForTests('tab-fantasy|detail-1|', 'sub_tab')).toBe(true);
+  });
+});
+
+describe('getAnchorRouteKey', () => {
+  it('is the route the tab is parked on in its own stack', () => {
+    expect(getAnchorRouteKey({ key: 'tab-fantasy', state: { index: 1, routes: [{ key: 'index-1' }, { key: 'detail-1' }] } })).toBe('detail-1');
+  });
+
+  it('is the anchor the scope uses for the same tab', () => {
+    const tab = { key: 'tab-fantasy', state: { type: 'stack', index: 1, routes: [{ key: 'index-1', name: 'Index' }, { key: 'detail-1', name: 'Detail' }] } };
+    const scope = computeRestorationScope([{ type: 'tab', index: 0, routes: [{ key: tab.key, name: 'FantasyTab' }] }, tab.state]);
+    expect(scope.split('|')[1]).toBe(getAnchorRouteKey(tab));
+  });
+
+  it('falls back to the tab itself before its stack has recorded any state', () => {
+    expect(getAnchorRouteKey({ key: 'tab-scores' })).toBe('tab-scores');
   });
 });

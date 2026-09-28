@@ -21,6 +21,15 @@ export type NavState = {
     index?: number;
     routes?: readonly NavRoute[];
 };
+/**
+ * The key of the route a tab is parked on in its own stack, which is what its restorable state is anchored to: what a
+ * snapshot's `place` should be, so a picture belongs to the same place the state does. Falls back to the tab's own key
+ * while React Navigation has not recorded the stack's state on the tab route, as it does not until the stack diverges.
+ */
+export declare function getAnchorRouteKey(tabRoute: {
+    key: string;
+    state?: unknown;
+}): any;
 /** Builds `tabKey|anchorKey|identity|name>name`, outermost first, from each navigator's state with its index on this component's path. */
 export declare function computeRestorationScope(states: readonly (NavState | undefined)[]): string;
 /**

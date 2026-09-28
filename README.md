@@ -42,7 +42,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.5.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.5.1-gitpkg"
 ```
 
 ## Setup
@@ -118,8 +118,8 @@ still has to render, so the root can be photographed on the way out and covered 
 // once, at launch
 configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
 
-// where you evict: `place` is where in the root the picture is taken
-<Evictable rootKey={tabKey} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: activeRouteKey }}>
+// where you evict: `place` is where in the root the picture is taken — for a tab, the route its state is anchored to
+<Evictable rootKey={tab.key} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: getAnchorRouteKey(tab) }}>
 ```
 
 `<Evictable>` photographs the view holding its children and draws the picture over them, in place for the whole
@@ -160,7 +160,7 @@ is long enough to scroll to the offset, then applies it.
 | entry | holds |
 | --- | --- |
 | `@sleeperhq/react-restorable` | everything above; React only |
-| `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `computeRestorationScope`, `collectLiveRouteKeys` |
+| `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `getAnchorRouteKey`, `computeRestorationScope`, `collectLiveRouteKeys` |
 | `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
 | `…/babel` | the transform |
 | `…/testing` | seeding and resetting the stores, for a consumer's own tests |
