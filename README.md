@@ -45,7 +45,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.6.0-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.6.1-gitpkg"
 ```
 
 ## Setup

@@ -321,6 +321,57 @@ describe('restorable transform', () => {
   });
 });
 
+describe('alongside the module and JSX transforms an app runs', () => {
+  function transformLikeAnApp(code: string) {
+    return transformSync(code, {
+      filename: FILENAME,
+      root: ROOT,
+      babelrc: false,
+      configFile: false,
+      // In one pass with the transform, as React Native's preset runs them, so a call they rewrite is visited again.
+      plugins: [
+        [plugin, APP_OPTIONS],
+        ['@babel/plugin-transform-typescript', { isTSX: true, allExtensions: true }],
+        '@babel/plugin-transform-react-jsx',
+        ['@babel/plugin-transform-modules-commonjs', { strict: false, strictMode: false, allowTopLevelThis: true }],
+      ],
+    })!.code!;
+  }
+
+  it('never leaves a runtime call the module transform did not see, as it would for a call it rewrote first', () => {
+    const output = transformLikeAnApp(`
+      import React, { useState } from 'react';
+      import { useToggle } from 'src/hooks/use_toggle';
+      import { AppScrollable } from 'src/components/ui/app_scrollable';
+      export function Example() {
+        const [open] = useToggle(false);
+        const [count] = useState(0);
+        React.useEffect(() => {}, [open]);
+        return <AppScrollable.FlatList data={[count]} />;
+      }
+      export const useFlag = () => useState(true);
+    `);
+
+    expect(output).not.toMatch(/(^|[^.\w])(enterComponentHookCall|enterHookCall|exitHookCall|useRestorationFrame|useHookRestorationFrame)\(/);
+    expect(output).toContain('_reactRestorable.enterComponentHookCall');
+    expect(output).not.toMatch(/HookCall\)\([^)]*\), \(0, _reactRestorable\.exitHookCall\)\(_react\.default\.useEffect/);
+    expect(output).toContain('__restoreId: "src/v2/fantasy_tab/components/example@0"');
+  });
+
+  it('does not mark React\'s own hook once the module transform has rewritten it to `_react.default.useEffect`', () => {
+    const output = transformLikeAnApp(`
+      import React from 'react';
+      export const Snow = React.memo(function Snow() {
+        React.useEffect(() => {}, []);
+        return null;
+      });
+    `);
+
+    expect(output).not.toContain('HookCall');
+    expect(output).toContain('_react.default.useEffect(');
+  });
+});
+
 describe('scrollables reached through an alias', () => {
   it('gives an id to a list aliased at module scope', () => {
     const code = transform(`
