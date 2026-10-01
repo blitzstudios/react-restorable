@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   RestorableEntry,
   RestorationNamespace,
+  claimRestorable,
   getIsRestorationEnabled,
-  readRestorable,
   registerScopedStore,
   writeRestorable,
 } from '../restorable_state';
@@ -20,7 +20,11 @@ const offsetStore = new Map<string, RestorableEntry<{ x: number; y: number }>>()
 
 registerScopedStore(offsetStore);
 
-const RESTORE_WINDOW_MS = 10000;
+/** How long a restore that has not landed yet may still move the list: a later jump would be under a user already reading it. */
+const RESTORE_WINDOW_MS = 3000;
+
+/** Rounding slack when comparing an offset with the furthest the content can scroll. */
+const REACH_TOLERANCE = 1;
 
 const MIN_OFFSET = 4;
 
@@ -63,6 +67,11 @@ function readOffset(event: { nativeEvent?: { contentOffset?: { x?: number; y?: n
   return { x: contentOffset.x ?? 0, y: contentOffset.y ?? 0 };
 }
 
+function readViewport(event: { nativeEvent?: { layout?: { width?: number; height?: number } } } | undefined, horizontal: boolean) {
+  const layout = event?.nativeEvent?.layout;
+  return (horizontal ? layout?.width : layout?.height) ?? 0;
+}
+
 /**
  * Puts each row in its own restoration namespace, so the state inside it belongs to that row rather than to the
  * call site every row shares.
@@ -101,8 +110,10 @@ function useRowNamespace(
 export function withScrollRestoration<C extends React.ComponentType<any>>(WrappedComponent: C, kind: Kind): C {
   const Restoring = React.forwardRef(function ScrollRestoring({ restoreId, ...props }: any, forwardedRef: any) {
     const offsetRef = useRef<{ x: number; y: number } | undefined>(undefined);
+    const pendingRef = useRef<{ x: number; y: number } | undefined>(undefined);
     const onDetach = useCallback((detachedKey: string, generation: number) => {
-      const offset = offsetRef.current;
+      // A restore that never landed is still where the user left the list.
+      const offset = pendingRef.current ?? offsetRef.current;
       if (offset && (Math.abs(offset.x) >= MIN_OFFSET || Math.abs(offset.y) >= MIN_OFFSET)) {
         writeRestorable(offsetStore, detachedKey, offset, generation);
       } else {
@@ -110,10 +121,12 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
       }
     }, []);
     const key = useScopedKey(restoreId, offsetStore, true, onDetach);
+    const claimant = useId();
 
     const instanceRef = useRef<Instance | null>(null);
-    const pendingRef = useRef<{ x: number; y: number } | undefined>(undefined);
     const deadlineRef = useRef(0);
+    const viewportRef = useRef(0);
+    const extentRef = useRef(0);
 
     const horizontal = Boolean(props.horizontal);
 
@@ -121,7 +134,7 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
     const hasReadRef = useRef(false);
     if (!hasReadRef.current) {
       hasReadRef.current = true;
-      const stored = key === null ? undefined : readRestorable(offsetStore, key)?.value;
+      const stored = key === null ? undefined : claimRestorable(offsetStore, key, claimant)?.value;
       if (stored) {
         pendingRef.current = stored;
         offsetRef.current = stored;
@@ -133,11 +146,20 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
     const [isHeld, setHeld] = useState(() => kind === 'scrollToOffset' && pendingRef.current !== undefined);
     const release = useCallback(() => setHeld(false), []);
 
+    // Revealed at the end of the hold either way. Content already past the offset gets it now, clamped to what has
+    // loaded, while the list is still hidden; a jump after the reveal would be under a user already reading it.
     useEffect(() => {
       if (!isHeld) return undefined;
-      const timer = setTimeout(release, HOLD_WINDOW_MS);
+      const timer = setTimeout(() => {
+        const pending = pendingRef.current;
+        if (pending && extentRef.current > (horizontal ? pending.x : pending.y)) {
+          pendingRef.current = undefined;
+          applyOffset(instanceRef.current, kind, pending, horizontal);
+        }
+        release();
+      }, HOLD_WINDOW_MS);
       return () => clearTimeout(timer);
-    }, [isHeld, release]);
+    }, [isHeld, release, horizontal]);
 
     const setRef = useCallback(
       (instance: Instance | null) => {
@@ -149,9 +171,30 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
     );
 
     const track = useCallback((event: any) => {
+      // Until the restore lands, scroll events are the list settling at the top, not the user moving it.
+      if (pendingRef.current) return;
       const offset = readOffset(event);
       if (offset) offsetRef.current = offset;
     }, []);
+
+    // Catches what the drag and momentum events miss, such as a `scrollToOffset` the screen makes without animating.
+    const originalScroll = props.onScroll;
+    const onScroll = useCallback(
+      (event: any) => {
+        track(event);
+        originalScroll?.(event);
+      },
+      [track, originalScroll],
+    );
+
+    const originalLayout = props.onLayout;
+    const onLayout = useCallback(
+      (event: any) => {
+        viewportRef.current = readViewport(event, horizontal);
+        originalLayout?.(event);
+      },
+      [horizontal, originalLayout],
+    );
 
     const originalScrollEndDrag = props.onScrollEndDrag;
     const onScrollEndDrag = useCallback(
@@ -184,16 +227,21 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
     const originalContentSizeChange = props.onContentSizeChange;
     const onContentSizeChange = useCallback(
       (width: number, height: number) => {
+        const extent = horizontal ? width : height;
+        extentRef.current = extent;
         const pending = pendingRef.current;
         if (pending) {
           if (Date.now() > deadlineRef.current) {
             pendingRef.current = undefined;
             release();
           } else {
-            // Applying the offset against a half-filled list clamps it to the bottom of what has loaded.
-            const extent = horizontal ? width : height;
+            // Applying the offset against a half-filled list clamps it to the bottom of what has loaded. The furthest a
+            // list scrolls is its content less its viewport; until a layout says how tall that is, content past the
+            // offset is the best available sign.
             const target = horizontal ? pending.x : pending.y;
-            if (extent > target) {
+            const viewport = viewportRef.current;
+            const isReachable = viewport > 0 ? extent - viewport + REACH_TOLERANCE >= target : extent > target;
+            if (isReachable) {
               pendingRef.current = undefined;
               applyOffset(instanceRef.current, kind, pending, horizontal);
               release();
@@ -228,6 +276,10 @@ export function withScrollRestoration<C extends React.ComponentType<any>>(Wrappe
       if (!isNativeHandler(originalMomentumEnd)) overrides.onMomentumScrollEnd = onMomentumScrollEnd;
       if (!isNativeHandler(originalBeginDrag)) overrides.onScrollBeginDrag = onScrollBeginDrag;
       if (!isNativeHandler(originalContentSizeChange)) overrides.onContentSizeChange = onContentSizeChange;
+      if (!isNativeHandler(originalLayout)) overrides.onLayout = onLayout;
+      // A virtualized list listens to its scroll events anyway, to window its rows. A plain scroll view only sends them
+      // when something is listening, so it is only tracked through a handler the call site already gives it.
+      if (!isNativeHandler(originalScroll) && (kind === 'scrollToOffset' || typeof originalScroll === 'function')) overrides.onScroll = onScroll;
     }
 
     return <WrappedComponent ref={setRef} {...props} {...overrides} />;

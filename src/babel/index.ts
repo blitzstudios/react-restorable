@@ -13,6 +13,11 @@ import type { NodePath, PluginObj, types as BabelTypes } from '@babel/core';
  *
  * `initial` hands back `leg` itself except on a restoring mount, so the call allocates nothing extra.
  *
+ * A custom hook (`use*`) gets `useHookRestorationFrame` instead, keyed by the call sites that led to it from the
+ * component rendering, so its state belongs to that component and that call. Each custom hook call is marked for it:
+ *
+ *   const [open, setOpen] = (enterComponentHookCall("src/screens/example#0@2"), exitHookCall(useToggle(false)));
+ *
  * Run it after React Compiler, which recognizes `useState` by name and has to see the plain hook.
  * Opt a call or element out with `// @no-restore` on its line or the line above.
  */
@@ -34,6 +39,17 @@ export type RestorableBabelOptions = {
 
 const DEFAULT_RUNTIME_MODULE = '@sleeperhq/react-restorable';
 const FRAME_HOOK = 'useRestorationFrame';
+const HOOK_FRAME_HOOK = 'useHookRestorationFrame';
+const ENTER_COMPONENT_HOOK_CALL = 'enterComponentHookCall';
+const ENTER_HOOK_CALL = 'enterHookCall';
+const EXIT_HOOK_CALL = 'exitHookCall';
+const RUNTIME_CALLS = new Set([FRAME_HOOK, HOOK_FRAME_HOOK, ENTER_COMPONENT_HOOK_CALL, ENTER_HOOK_CALL, EXIT_HOOK_CALL]);
+/**
+ * Hooks from these keep no restorable state, so marking their calls would only cost. Other packages are marked anyway:
+ * a wasted mark costs two calls, while a skipped source the transform does rewrite would silently stop its hooks restoring.
+ */
+const UNMARKED_HOOK_SOURCES = ['react', 'react-native'];
+const HOOK_NAME = /^use[A-Z0-9]/;
 const DEFAULT_OPT_OUT = '@no-restore';
 const SCROLLABLE_PROP = '__restoreId';
 const DEFAULT_SCROLLABLE_COMPONENTS = ['ScrollView', 'FlatList', 'FlashList', 'SectionList', 'VirtualizedList'];
@@ -44,13 +60,17 @@ const REACT_HOOKS = new Set(['useState']);
 
 type Scrollables = { root: string; components: Set<string>; qualifiers: Set<string> };
 
-type Frame = { fnPath: NodePath; id: string; local: string; slots: number };
+type Frame = { fnPath: NodePath; id: string; local: string; slots: number; isHook: boolean };
 
 type FileState = {
-  frameCounter: number;
+  functionCounter: number;
   scrollableCounter: number;
+  /** One id per function, shared by its frame and its hook call sites. */
+  functionIds: Map<BabelTypes.Node, string>;
+  hookCallCounts: Map<BabelTypes.Node, number>;
   frames: Map<BabelTypes.Node, Frame>;
   rewritten: WeakSet<BabelTypes.Node>;
+  runtimeImports: Set<string>;
   excluded: boolean;
   moduleId: string;
 };
@@ -146,6 +166,56 @@ function hasOptOut(nodePath: NodePath, optOut: string) {
   );
 }
 
+function nameOfFunction(fnPath: NodePath): string | undefined {
+  const node = fnPath.node as any;
+  if (node.id?.type === 'Identifier') return node.id.name;
+  if ((node.type === 'ObjectMethod' || node.type === 'ClassMethod') && node.key?.type === 'Identifier') return node.key.name;
+
+  const parent = fnPath.parent as any;
+  if (parent.type === 'VariableDeclarator' && parent.id.type === 'Identifier') return parent.id.name;
+  if (parent.type === 'ObjectProperty' && parent.key.type === 'Identifier') return parent.key.name;
+  if (parent.type === 'AssignmentExpression') {
+    if (parent.left.type === 'Identifier') return parent.left.name;
+    if (parent.left.type === 'MemberExpression' && parent.left.property.type === 'Identifier') return parent.left.property.name;
+  }
+  return undefined;
+}
+
+function isCustomHook(fnPath: NodePath) {
+  const name = nameOfFunction(fnPath);
+  return name !== undefined && HOOK_NAME.test(name);
+}
+
+/** The identifier a callee is reached through: `useX` itself, or `Service` in `Service.Hooks.useX`. */
+function rootIdentifierOf(callee: BabelTypes.Expression | BabelTypes.V8IntrinsicIdentifier) {
+  let node: any = callee;
+  while (node.type === 'MemberExpression') node = node.object;
+  return node.type === 'Identifier' ? (node.name as string) : undefined;
+}
+
+function hookNameOf(callee: BabelTypes.Expression | BabelTypes.V8IntrinsicIdentifier) {
+  if (callee.type === 'Identifier') return callee.name;
+  if (callee.type === 'MemberExpression' && !callee.computed && callee.property.type === 'Identifier') return callee.property.name;
+  return undefined;
+}
+
+/** A call to a hook that may keep state of its own, as opposed to React's or the runtime's. */
+function isCustomHookCall(nodePath: NodePath<BabelTypes.CallExpression>) {
+  const callee = nodePath.node.callee;
+  const name = hookNameOf(callee);
+  if (name === undefined || !HOOK_NAME.test(name) || RUNTIME_CALLS.has(name)) return false;
+
+  const root = rootIdentifierOf(callee);
+  if (root === undefined) return true;
+  if (root === 'React' && callee.type === 'MemberExpression') return false;
+
+  const binding = nodePath.scope.getBinding(root);
+  if (binding?.kind !== 'module') return true;
+  const source = (binding.path.parent as BabelTypes.ImportDeclaration).source?.value;
+  if (typeof source !== 'string') return true;
+  return !UNMARKED_HOOK_SOURCES.some((unmarked) => source === unmarked || source.startsWith(`${unmarked}/`));
+}
+
 function isStateHook(nodePath: NodePath<BabelTypes.CallExpression>, helperHooks: Record<string, string>) {
   const callee = nodePath.node.callee;
 
@@ -191,6 +261,23 @@ export default function restorableBabelPlugin({ types: t }: { types: typeof Babe
 
   const fileState = (state: any): FileState => state.restorable;
 
+  const functionIdOf = (context: FileState, fnNode: BabelTypes.Node) => {
+    let id = context.functionIds.get(fnNode);
+    if (id === undefined) {
+      id = `${context.moduleId}#${context.functionCounter}`;
+      context.functionCounter += 1;
+      context.functionIds.set(fnNode, id);
+    }
+    return id;
+  };
+
+  const runtimeCall = (context: FileState, name: string, args: BabelTypes.Expression[]) => {
+    context.runtimeImports.add(name);
+    const call = t.callExpression(t.identifier(name), args);
+    context.rewritten.add(call);
+    return call;
+  };
+
   return {
     name: 'react-restorable',
     visitor: {
@@ -200,30 +287,34 @@ export default function restorableBabelPlugin({ types: t }: { types: typeof Babe
           const root = state.file.opts.root ?? state.cwd ?? process.cwd();
           const excluded = isExcluded(filename, options.include, exclude) || hasHandWrittenRestoration(programPath.node, runtimeModule);
           state.restorable = {
-            frameCounter: 0,
+            functionCounter: 0,
             scrollableCounter: 0,
+            functionIds: new Map(),
+            hookCallCounts: new Map(),
             frames: new Map(),
             rewritten: new WeakSet(),
+            runtimeImports: new Set(),
             excluded,
             moduleId: filename ? moduleIdOf(filename, root) : '',
           } satisfies FileState;
         },
         exit(programPath, state: any) {
-          const { frames } = fileState(state);
-          if (frames.size === 0) return;
+          const context = fileState(state);
+          const { frames, runtimeImports } = context;
 
           // Inserted after traversal, since giving an arrow a block body mid-traversal would move the calls being visited.
           for (const frame of frames.values()) {
             const { id, local } = frame;
             const fnPath: NodePath<BabelTypes.Function> = frame.fnPath as NodePath<BabelTypes.Function>;
             fnPath.ensureBlock();
-            const init = t.callExpression(t.identifier(FRAME_HOOK), [t.stringLiteral(id)]);
+            const init = runtimeCall(context, frame.isHook ? HOOK_FRAME_HOOK : FRAME_HOOK, [t.stringLiteral(id)]);
             const body = fnPath.get('body') as NodePath<BabelTypes.BlockStatement>;
             body.unshiftContainer('body', t.variableDeclaration('const', [t.variableDeclarator(t.identifier(local), init)]));
           }
 
-          const specifier = t.importSpecifier(t.identifier(FRAME_HOOK), t.identifier(FRAME_HOOK));
-          programPath.unshiftContainer('body', t.importDeclaration([specifier], t.stringLiteral(runtimeModule)));
+          if (runtimeImports.size === 0) return;
+          const specifiers = Array.from(runtimeImports, (name) => t.importSpecifier(t.identifier(name), t.identifier(name)));
+          programPath.unshiftContainer('body', t.importDeclaration(specifiers, t.stringLiteral(runtimeModule)));
         },
       },
 
@@ -244,26 +335,38 @@ export default function restorableBabelPlugin({ types: t }: { types: typeof Babe
         if (context.excluded) return;
         if (context.rewritten.has(nodePath.node)) return;
 
-        if (!isStateHook(nodePath, helperHooks)) return;
+        // A hook called outside any function breaks the rules of hooks already; leave it for the lint to catch.
+        const fnPath = nodePath.getFunctionParent();
+        if (!fnPath) return;
+
+        if (!isStateHook(nodePath, helperHooks)) {
+          if (!isCustomHookCall(nodePath) || hasOptOut(nodePath, optOut)) return;
+
+          const index = context.hookCallCounts.get(fnPath.node) ?? 0;
+          context.hookCallCounts.set(fnPath.node, index + 1);
+          const callSite = t.stringLiteral(`${functionIdOf(context, fnPath.node)}@${index}`);
+          const call = nodePath.node;
+          context.rewritten.add(call);
+          // A component's call starts the chain afresh; a hook's extends the one its own caller opened.
+          const enter = runtimeCall(context, isCustomHook(fnPath) ? ENTER_HOOK_CALL : ENTER_COMPONENT_HOOK_CALL, [callSite]);
+          nodePath.replaceWith(t.sequenceExpression([enter, runtimeCall(context, EXIT_HOOK_CALL, [call])]));
+          return;
+        }
         if (hasOptOut(nodePath, optOut)) return;
 
         const args = nodePath.node.arguments;
         // Spread would put the initial value somewhere the read cannot find it.
         if (args.some((arg) => arg.type === 'SpreadElement')) return;
 
-        // A hook called outside any function breaks the rules of hooks already; leave it for the lint to catch.
-        const fnPath = nodePath.getFunctionParent();
-        if (!fnPath) return;
-
         let frame = context.frames.get(fnPath.node);
         if (!frame) {
           frame = {
             fnPath,
-            id: `${context.moduleId}#${context.frameCounter}`,
+            id: functionIdOf(context, fnPath.node),
             local: fnPath.scope.generateUidIdentifier('restore').name,
             slots: 0,
+            isHook: isCustomHook(fnPath),
           };
-          context.frameCounter += 1;
           context.frames.set(fnPath.node, frame);
         }
         const slot = t.numericLiteral(frame.slots);

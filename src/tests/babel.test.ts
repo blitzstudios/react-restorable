@@ -166,7 +166,123 @@ describe('restorable transform', () => {
       export const useToggle = () => useState(false);
     `);
 
-    expect(output).toMatch(/useToggle = \(\) => \{\s*const _restore = useRestorationFrame\("src\/v2\/fantasy_tab\/components\/example#0"\);\s*return _restore\.state\(0, useState\(_restore\.initial\(0, false\)\)\);/);
+    expect(output).toMatch(/useToggle = \(\) => \{\s*const _restore = useHookRestorationFrame\("src\/v2\/fantasy_tab\/components\/example#0"\);\s*return _restore\.state\(0, useState\(_restore\.initial\(0, false\)\)\);/);
+  });
+
+  it('gives a custom hook a hook frame, however it is declared', () => {
+    const output = transform(`
+      import { useState } from 'react';
+      export const useToggle = () => useState(false);
+      export function useKeyboardHeight() { return useState(0); }
+      const hooks = { useCounter() { return useState(1); }, useFlag: () => useState(true) };
+    `);
+
+    expect(output.match(/useHookRestorationFrame\(/g)).toHaveLength(4);
+    expect(output).not.toContain('useRestorationFrame(');
+  });
+
+  it('gives a component a component frame, including one wrapped anonymously', () => {
+    const output = transform(`
+      import React, { useState } from 'react';
+      export const Row = React.memo((props) => {
+        const [expanded] = useState(false);
+        return expanded;
+      });
+      export default function () { return useState(1); }
+    `);
+
+    expect(output.match(/useRestorationFrame\(/g)).toHaveLength(2);
+    expect(output).not.toContain('useHookRestorationFrame');
+  });
+
+  it('marks each custom hook call a component makes, numbered by call site', () => {
+    const output = transform(`
+      import { useToggle } from 'src/hooks/use_toggle';
+      export function Example() {
+        const [a] = useToggle(false);
+        const [b] = useToggle(true);
+        return [a, b];
+      }
+    `);
+
+    expect(output).toContain('(enterComponentHookCall("src/v2/fantasy_tab/components/example#0@0"), exitHookCall(useToggle(false)))');
+    expect(output).toContain('(enterComponentHookCall("src/v2/fantasy_tab/components/example#0@1"), exitHookCall(useToggle(true)))');
+    expect(output).toContain('import { enterComponentHookCall, exitHookCall } from "@sleeperhq/react-restorable"');
+  });
+
+  it('extends the chain from inside a hook, rather than starting it afresh', () => {
+    const output = transform(`
+      import { useToggle } from 'src/hooks/use_toggle';
+      export function usePanel() { return useToggle(false); }
+    `);
+
+    expect(output).toContain('enterHookCall("src/v2/fantasy_tab/components/example#0@0")');
+    expect(output).not.toContain('enterComponentHookCall');
+  });
+
+  it('shares one id between a function\'s frame and its call sites', () => {
+    const output = transform(`
+      import { useState } from 'react';
+      import { useToggle } from 'src/hooks/use_toggle';
+      export function Example() {
+        const [open] = useToggle(false);
+        const [count] = useState(0);
+        return [open, count];
+      }
+    `);
+
+    expect(output).toContain('useRestorationFrame("src/v2/fantasy_tab/components/example#0")');
+    expect(output).toContain('enterComponentHookCall("src/v2/fantasy_tab/components/example#0@0")');
+  });
+
+  it('leaves React\'s and React Native\'s own hooks unmarked, and marks a hook reached through a namespace', () => {
+    const output = transform(`
+      import React, { useMemo, useEffect } from 'react';
+      import { useWindowDimensions } from 'react-native';
+      import { FeatureService } from 'src/services/feature';
+      export function Example() {
+        const size = useWindowDimensions();
+        const memo = useMemo(() => 1, []);
+        const ref = React.useRef(null);
+        useEffect(() => {}, []);
+        return FeatureService.Hooks.useIsFeatureEnabled('x');
+      }
+    `);
+
+    expect(output.match(/enterComponentHookCall\(/g)).toHaveLength(1);
+    expect(output).toContain('exitHookCall(FeatureService.Hooks.useIsFeatureEnabled(\'x\'))');
+  });
+
+  it('does not mark the frames it injects', () => {
+    const output = transform(`
+      import { useState } from 'react';
+      export const useFlag = () => useState(true);
+      export function Example() { return useState(1); }
+    `);
+
+    expect(output).not.toMatch(/exitHookCall\(use(Hook)?RestorationFrame/);
+  });
+
+  it('honours the opt-out on a custom hook call', () => {
+    const output = transform(`
+      import { useToggle } from 'src/hooks/use_toggle';
+      export function Example() {
+        // @no-restore
+        return useToggle(false);
+      }
+    `);
+
+    expect(output).not.toContain('enterComponentHookCall');
+  });
+
+  it('rewrites a helper hook at its call site without also marking it', () => {
+    const output = transform(`
+      import { useMergeState } from 'src/hooks/hook_helper';
+      export function Example() { return useMergeState({ round: 1 }); }
+    `);
+
+    expect(output).toContain('_restore.state(0, useMergeState(');
+    expect(output).not.toContain('enterComponentHookCall');
   });
 
   it('gives each function its own frame', () => {
@@ -297,6 +413,28 @@ describe('options', () => {
 
   it('imports the frame from wherever it is told to', () => {
     expect(transform(code, FILENAME, { ...APP_OPTIONS, runtimeModule: 'app/restoration' })).toContain('from "app/restoration"');
+  });
+
+  it('marks hooks from any other package, since a wasted mark costs less than a missed one', () => {
+    const output = transform(`
+      import { useNavigation } from '@react-navigation/native';
+      import { useReactish } from 'react-ish';
+      export function Example() {
+        const navigation = useNavigation();
+        return useReactish();
+      }
+    `);
+
+    expect(output.match(/enterComponentHookCall\(/g)).toHaveLength(2);
+  });
+
+  it('leaves React hooks reached through a namespace import unmarked', () => {
+    const output = transform(`
+      import * as R from 'react';
+      export function Example() { return R.useMemo(() => 1, []); }
+    `);
+
+    expect(output).not.toContain('enterComponentHookCall');
   });
 
   it('leaves a helper hook alone unless it is named', () => {

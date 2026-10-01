@@ -14,6 +14,7 @@ export declare function getRestorationStats(): {
     manualRestored: number;
     manualMissed: number;
     pruned: number;
+    refusedClaimed: number;
     restored: number;
     restoredChanged: number;
     missed: number;
@@ -44,11 +45,23 @@ export type RestorationFrameApi = {
     /** Records what a slot rendered and passes the hook's result through untouched. */
     state<Tuple extends readonly unknown[]>(slot: number, tuple: Tuple): Tuple;
 };
+/** Marks a custom hook call a component makes. Starts the chain afresh, so a render that threw mid-hook cannot leave it stale. */
+export declare function enterComponentHookCall(callSite: string): void;
+/** Marks a custom hook call another hook makes. */
+export declare function enterHookCall(callSite: string): void;
+/** Closes the call the last `enter` opened, and passes the hook's result through. */
+export declare function exitHookCall<T>(value: T): T;
 /**
  * One per function that calls a state hook, injected by the transform. The gate is read once per
  * launch, so with eviction off this calls no hooks at all and the frame costs nothing.
  */
 export declare function useRestorationFrame(frameId: string): RestorationFrameApi;
+/**
+ * The frame the transform injects into a custom hook. Keyed by the calls that led to it from the component rendering,
+ * so its state belongs to that component and that call site rather than following the hook into whichever component
+ * calls it next.
+ */
+export declare function useHookRestorationFrame(frameId: string): RestorationFrameApi;
 /** What the transform emits for a component with a single `useState`. */
 export declare function useAutoState<T>(id: string, initialValue: T | (() => T)): [T, import("react").Dispatch<import("react").SetStateAction<T>>];
 //# sourceMappingURL=auto_restorable.d.ts.map

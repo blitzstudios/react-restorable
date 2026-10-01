@@ -276,6 +276,133 @@ describe('withScrollRestoration', () => {
     expect(lastProps.onScrollEndDrag).toBe(nativeHandler);
   });
 
+  describe('what the list is tracked through', () => {
+    const scrollEvent = (y: number) => ({ nativeEvent: { contentOffset: { x: 0, y } } });
+
+    it('follows a scroll the screen makes itself, which sends no drag or momentum event', () => {
+      const first = render(<List __restoreId="screen@0" />);
+      scrollTo(800);
+      act(() => lastProps.onScroll(scrollEvent(0)));
+      evict(first);
+      expect(scrollOffsetsForTests().size).toBe(0);
+    });
+
+    it('ignores the scroll events of a list settling at the top before its restore lands', () => {
+      const first = render(<List __restoreId="screen@0" />);
+      scrollTo(800);
+      evict(first);
+
+      const second = render(<List __restoreId="screen@0" />);
+      act(() => lastProps.onScroll(scrollEvent(0)));
+      evict(second);
+
+      render(<List __restoreId="screen@0" />);
+      act(() => lastProps.onContentSizeChange(0, 2000));
+      expect(scrolled).toEqual([{ offset: 800 }]);
+    });
+
+    it('chains to the call site\'s own onScroll and onLayout', () => {
+      const onScroll = jest.fn();
+      const onLayout = jest.fn();
+      render(<List __restoreId="screen@0" onScroll={onScroll} onLayout={onLayout} />);
+      act(() => lastProps.onScroll(scrollEvent(10)));
+      act(() => lastProps.onLayout({ nativeEvent: { layout: { width: 300, height: 600 } } }));
+      expect(onScroll).toHaveBeenCalledTimes(1);
+      expect(onLayout).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a natively driven onScroll exactly as given', () => {
+      const nativeHandler: any = jest.fn();
+      nativeHandler.__workletHash = 1;
+      render(<List __restoreId="screen@0" onScroll={nativeHandler} />);
+      expect(lastProps.onScroll).toBe(nativeHandler);
+    });
+
+    it('adds no onScroll to a plain scroll view, which would start sending events it does not send today', () => {
+      const ScrollViewLike = withScrollRestoration(FakeList as any, 'scrollTo');
+      render(<ScrollViewLike __restoreId="screen@0" />);
+      expect(lastProps.onScroll).toBeUndefined();
+
+      const onScroll = jest.fn();
+      render(<ScrollViewLike __restoreId="screen@1" onScroll={onScroll} />);
+      expect(lastProps.onScroll).not.toBe(onScroll);
+      act(() => lastProps.onScroll(scrollEvent(10)));
+      expect(onScroll).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the offset is reachable', () => {
+    function restoringMountWithViewport(height: number) {
+      const first = render(<List __restoreId="screen@0" />);
+      scrollTo(800);
+      evict(first);
+      render(<List __restoreId="screen@0" />);
+      act(() => lastProps.onLayout({ nativeEvent: { layout: { width: 300, height } } }));
+    }
+
+    it('waits until the content less its viewport reaches the offset, rather than landing short', () => {
+      restoringMountWithViewport(600);
+      act(() => lastProps.onContentSizeChange(0, 1000));
+      expect(scrolled).toEqual([]);
+
+      act(() => lastProps.onContentSizeChange(0, 1400));
+      expect(scrolled).toEqual([{ offset: 800 }]);
+    });
+
+    it('applies what it can while still hidden when the content stops short, rather than revealing the top', () => {
+      jest.useFakeTimers();
+      try {
+        restoringMountWithViewport(600);
+        act(() => lastProps.onContentSizeChange(0, 1000));
+        expect(scrolled).toEqual([]);
+
+        act(() => jest.advanceTimersByTime(1000));
+        expect(scrolled).toEqual([{ offset: 800 }]);
+        expect(lastProps.style).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('gives up once the restore window has passed, rather than jumping under a user already reading', () => {
+      const now = jest.spyOn(Date, 'now');
+      try {
+        now.mockReturnValue(0);
+        const first = render(<List __restoreId="screen@0" />);
+        scrollTo(800);
+        evict(first);
+        render(<List __restoreId="screen@0" />);
+
+        now.mockReturnValue(5000);
+        act(() => lastProps.onContentSizeChange(0, 2000));
+        expect(scrolled).toEqual([]);
+      } finally {
+        now.mockRestore();
+      }
+    });
+  });
+
+  it('gives an offset left by one list to only the first of several that come back in one commit', () => {
+    const first = render(<List __restoreId="screen@0" />);
+    scrollTo(800);
+    evict(first);
+
+    const handles: any[] = [];
+    const Capture = React.forwardRef(function Capture(props: any, ref: any) {
+      handles.push(props);
+      return <FakeList {...props} ref={ref} />;
+    });
+    const Captured = withScrollRestoration(Capture as any, 'scrollToOffset');
+    render(
+      <>
+        <Captured __restoreId="screen@0" />
+        <Captured __restoreId="screen@0" />
+      </>,
+    );
+    act(() => handles.slice(-2).forEach((props) => props.onContentSizeChange(0, 2000)));
+    expect(scrolled).toEqual([{ offset: 800 }]);
+  });
+
   it('tracks the horizontal axis for a horizontal list', () => {
     const first = render(<List __restoreId="screen@0" horizontal />);
     act(() => {

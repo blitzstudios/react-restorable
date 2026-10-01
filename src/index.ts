@@ -15,11 +15,15 @@ export {
 } from './restorable_state';
 export type { RestorableEntry } from './restorable_state';
 export {
+  enterComponentHookCall,
+  enterHookCall,
+  exitHookCall,
   getRestorationStats,
   getRestoredChangedSites,
   isRestorable,
   reportRestorationStats,
   useAutoState,
+  useHookRestorationFrame,
   useRestorationFrame,
 } from './auto_restorable';
 export type { RestorationFrameApi } from './auto_restorable';

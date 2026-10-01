@@ -1,6 +1,16 @@
 import React, { Activity, useState } from 'react';
 import { act } from 'react-test-renderer';
-import { getRestorationStats, getRestoredChangedSites, isRestorable, useAutoState, useRestorationFrame } from '../auto_restorable';
+import {
+  enterComponentHookCall,
+  enterHookCall,
+  exitHookCall,
+  getRestorationStats,
+  getRestoredChangedSites,
+  isRestorable,
+  useAutoState,
+  useHookRestorationFrame,
+  useRestorationFrame,
+} from '../auto_restorable';
 import { RestorationHiddenBoundary, RestorationNamespace, markEvicted, resetRestorationForTests, setRestorationEnabled } from '../restorable_state';
 import { InTab, Text, Unholdable, render, renderHook } from './render';
 
@@ -222,6 +232,32 @@ describe('useAutoState', () => {
     expect(second.result.current[0]).toBeNull();
   });
 
+  it('does not rebuild a partly kept record over an initial value that is not a record', () => {
+    type Selected = { id: string; onPress: () => void } | null;
+    const first = renderHook(() => useAutoState<Selected>('selected', null), { wrapper });
+    act(() => first.result.current[1]({ id: 'x', onPress: () => undefined }));
+    evict(first);
+
+    const second = renderHook(() => useAutoState<Selected>('selected', null), { wrapper });
+    expect(second.result.current[0]).toBeNull();
+  });
+
+  it('calls a lazy initializer once when it declines a partly kept record', () => {
+    let calls = 0;
+    const init = () => {
+      calls += 1;
+      return null as { id: string; onPress: () => void } | null;
+    };
+    const first = renderHook(() => useAutoState('selected-lazy', init), { wrapper });
+    act(() => first.result.current[1]({ id: 'x', onPress: () => undefined }));
+    evict(first);
+    calls = 0;
+
+    const second = renderHook(() => useAutoState('selected-lazy', init), { wrapper });
+    expect(second.result.current[0]).toBeNull();
+    expect(calls).toBe(1);
+  });
+
   it('keeps ids apart', () => {
     const both = renderHook(() => [useAutoState('a', 1), useAutoState('b', 2)] as const, { wrapper });
     act(() => both.result.current[0][1](9));
@@ -271,6 +307,42 @@ describe('scope safety', () => {
     evict(solo);
 
     expect(renderHook(() => useAutoState('transient', 'a'), { wrapper }).result.current[0]).toBe('changed');
+  });
+
+  it('hands a value left by one instance to only the first of several that come back in one commit', () => {
+    function Row({ id }: { id: string }) {
+      const [expanded, setExpanded] = useAutoState('row#0', false);
+      if (id === 'only') setOnly = setExpanded;
+      return <Text testID={id}>{String(expanded)}</Text>;
+    }
+    let setOnly: (next: boolean) => void = () => undefined;
+
+    const first = render(<InTab><Row id="only" /></InTab>);
+    act(() => setOnly(true));
+    evict(first);
+
+    const later = render(
+      <InTab>
+        <Row id="r1" />
+        <Row id="r2" />
+        <Row id="r3" />
+      </InTab>,
+    );
+    expect([later.textOf('r1'), later.textOf('r2'), later.textOf('r3')]).toEqual(['true', 'false', 'false']);
+    expect(getRestorationStats().refusedClaimed).toBeGreaterThan(0);
+  });
+
+  it('still restores under StrictMode, whose repeated render of a mount is the same instance', () => {
+    const strictTab = ({ children }: { children: React.ReactNode }) => (
+      <React.StrictMode>
+        <InTab>{children}</InTab>
+      </React.StrictMode>
+    );
+    const first = renderHook(() => useAutoState('strict', 'a'), { wrapper: strictTab });
+    act(() => first.result.current[1]('changed'));
+    evict(first);
+
+    expect(renderHook(() => useAutoState('strict', 'a'), { wrapper: strictTab }).result.current[0]).toBe('changed');
   });
 
   it('still restores a key only ever held by one instance at a time', () => {
@@ -363,6 +435,100 @@ describe('restoration frames', () => {
     const handler = () => 'handled';
     const view = renderHook(() => useAutoState<() => string>('fn#0', () => handler), { wrapper });
     expect(view.result.current[0]).toBe(handler);
+  });
+});
+
+describe('custom hook frames', () => {
+  /** What the transform emits for `const useToggle = (initial) => useState(initial)`. */
+  function useToggle(initial: boolean) {
+    const frame = useHookRestorationFrame('hooks/use_toggle#0');
+    return frame.state(0, useState(frame.initial(0, initial)));
+  }
+
+  /** A hook that keeps no state of its own, calling one that does. */
+  function usePanel() {
+    return (enterHookCall('hooks/use_panel#0@0'), exitHookCall(useToggle(false)));
+  }
+
+  const setters: Record<string, (next: boolean) => void> = {};
+
+  function ComponentA() {
+    const [open, setOpen] = (enterComponentHookCall('screens/a#0@0'), exitHookCall(useToggle(false)));
+    setters.a = setOpen;
+    return <Text testID="a">{String(open)}</Text>;
+  }
+
+  function ComponentB() {
+    const [open] = (enterComponentHookCall('screens/b#0@0'), exitHookCall(useToggle(false)));
+    return <Text testID="b">{String(open)}</Text>;
+  }
+
+  function TwoToggles() {
+    const [first, setFirst] = (enterComponentHookCall('screens/two#0@0'), exitHookCall(useToggle(false)));
+    const [second] = (enterComponentHookCall('screens/two#0@1'), exitHookCall(useToggle(false)));
+    setters.first = setFirst;
+    return <Text testID="two">{`${first},${second}`}</Text>;
+  }
+
+  function Panel() {
+    const [open, setOpen] = (enterComponentHookCall('screens/panel#0@0'), exitHookCall(usePanel()));
+    setters.panel = setOpen;
+    return <Text testID="panel">{String(open)}</Text>;
+  }
+
+  it('restores a hook\'s state into the component that called it', () => {
+    const first = render(<InTab><ComponentA /></InTab>);
+    act(() => setters.a(true));
+    evict(first);
+
+    expect(render(<InTab><ComponentA /></InTab>).textOf('a')).toBe('true');
+  });
+
+  it('does not carry one component\'s hook state into another that calls the same hook', () => {
+    const first = render(<InTab><ComponentA /></InTab>);
+    act(() => setters.a(true));
+    evict(first);
+
+    expect(render(<InTab><ComponentB /></InTab>).textOf('b')).toBe('false');
+  });
+
+  it('keeps two calls of one hook in one component apart, where a shared key would have been refused', () => {
+    const first = render(<InTab><TwoToggles /></InTab>);
+    act(() => setters.first(true));
+    evict(first);
+
+    expect(render(<InTab><TwoToggles /></InTab>).textOf('two')).toBe('true,false');
+  });
+
+  it('follows the chain through a hook that calls another', () => {
+    const first = render(<InTab><Panel /></InTab>);
+    act(() => setters.panel(true));
+    evict(first);
+
+    expect(render(<InTab><Panel /></InTab>).textOf('panel')).toBe('true');
+  });
+
+  it('does not restore a hook called from code the transform did not mark', () => {
+    const first = renderHook(() => useToggle(false), { wrapper });
+    act(() => first.result.current[1](true));
+    evict(first);
+
+    const before = getRestorationStats().refusedUnanchored;
+    expect(renderHook(() => useToggle(false), { wrapper }).result.current[0]).toBe(false);
+    expect(getRestorationStats().refusedUnanchored).toBeGreaterThan(before);
+  });
+
+  it('passes the hook\'s result straight through and keeps no chain when tabs are not being evicted', () => {
+    setRestorationEnabled(false);
+    const result = { value: 1 };
+    enterComponentHookCall('screens/off#0@0');
+    expect(exitHookCall(result)).toBe(result);
+
+    setRestorationEnabled(true);
+    const later = renderHook(() => useToggle(false), { wrapper });
+    act(() => later.result.current[1](true));
+    evict(later);
+    expect(renderHook(() => useToggle(false), { wrapper }).result.current[0]).toBe(false);
   });
 });
 

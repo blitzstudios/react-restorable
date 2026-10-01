@@ -11,6 +11,11 @@ import type { PluginObj, types as BabelTypes } from '@babel/core';
  *
  * `initial` hands back `leg` itself except on a restoring mount, so the call allocates nothing extra.
  *
+ * A custom hook (`use*`) gets `useHookRestorationFrame` instead, keyed by the call sites that led to it from the
+ * component rendering, so its state belongs to that component and that call. Each custom hook call is marked for it:
+ *
+ *   const [open, setOpen] = (enterComponentHookCall("src/screens/example#0@2"), exitHookCall(useToggle(false)));
+ *
  * Run it after React Compiler, which recognizes `useState` by name and has to see the plain hook.
  * Opt a call or element out with `// @no-restore` on its line or the line above.
  */

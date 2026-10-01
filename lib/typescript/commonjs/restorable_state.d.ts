@@ -24,6 +24,7 @@ export declare const restorationCounters: {
     manualRestored: number;
     manualMissed: number;
     pruned: number;
+    refusedClaimed: number;
 };
 /**
  * Whether restoration reports anything to the console. Off by default: a refusal is the layer declining to restore
@@ -45,6 +46,12 @@ export declare function markEvicted(rootKey: string): void;
 export declare function getRestorationGeneration(key: string): number;
 /** Only a value written before the root's latest eviction is restored, so a remount inside a live tree starts fresh. */
 export declare function readRestorable<T>(store: Map<string, RestorableEntry<T>>, key: string): RestorableEntry<T> | undefined;
+/**
+ * `readRestorable` for a value only one instance may take: siblings mounting in the same commit all read during render,
+ * before any of them can register as a holder, so the first to ask keeps it and the rest start fresh. `claimant` must be
+ * stable for one instance across a repeated render of its mount, as `useId()` is.
+ */
+export declare function claimRestorable<T>(store: Map<string, RestorableEntry<T>>, key: string, claimant: string): RestorableEntry<T> | undefined;
 /** Re-inserted so the map orders by write recency, which is what the size caps evict by. */
 export declare function writeRestorable<T>(store: Map<string, RestorableEntry<T>>, key: string, value: T, generation?: number): void;
 export type HiddenNode = {

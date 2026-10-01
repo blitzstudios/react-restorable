@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { isRestorableEqual } from './equality';
 import {
   RestorableEntry,
   UNANCHORED_SCOPE_PREFIX,
+  claimRestorable,
   getDetachReason,
   getIsRestorationDebugEnabled,
   getIsRestorationEnabled,
   getRestorationGeneration,
-  readRestorable,
   registerScopedStore,
   registerTestReset,
   reportRestorationOnce,
@@ -103,10 +103,9 @@ const reportOnce = reportRestorationOnce;
 function recordMiss(key: string, frameId: string, slot: number) {
   const site = `${frameId}:${slot}`;
   reportOnce('miss', site, () => {
-    const suffix = `|${frameId}`;
     let rival: string | undefined;
     for (const stored of valueStore.keys()) {
-      if (stored !== key && stored.endsWith(suffix)) {
+      if (stored !== key && (stored.endsWith(`|${frameId}`) || stored.endsWith(`>${frameId}`))) {
         rival = stored;
         break;
       }
@@ -299,7 +298,7 @@ class RestorationFrame implements RestorationFrameApi {
   private rendered: unknown[] = [];
   private committed: unknown[] = [];
 
-  constructor(frameId: string, key: string | null) {
+  constructor(frameId: string, key: string | null, claimant: string) {
     this.frameId = frameId;
     this.key = key;
 
@@ -310,7 +309,7 @@ class RestorationFrame implements RestorationFrameApi {
       return;
     }
     // Two holders of one key cannot both be handed its value, and neither is the one that left it.
-    if (!contendedKeys.has(key)) this.restored = readRestorable(valueStore, key)?.value;
+    if (!contendedKeys.has(key)) this.restored = claimRestorable(valueStore, key, claimant)?.value;
   }
 
   initial<T>(slot: number, init: T | (() => T)): T | (() => T) {
@@ -325,6 +324,12 @@ class RestorationFrame implements RestorationFrameApi {
     // Resolved here only to overlay a partial record and to tell whether the restore changed anything.
     const initial = resolveInitial(init) as T;
     const stored = this.restored.get(slot);
+    // Kept fields need a record to go back into: over `null`, they would be an object missing everything not kept.
+    if (isPartialValue(stored) && !isPlainRecord(initial)) {
+      stats.missed += 1;
+      reportOnce('miss', `${this.frameId}:${slot}`, () => `[restore-miss] SHAPE site=${this.frameId}:${slot} initial is not a plain object`);
+      return typeof init === 'function' ? () => initial : init;
+    }
     stats.restored += 1;
     if (differsFromInitial(stored, initial)) {
       const site = `${this.frameId}:${slot}`;
@@ -393,13 +398,48 @@ class RestorationFrame implements RestorationFrameApi {
   }
 }
 
-function useLiveRestorationFrame(frameId: string): RestorationFrameApi {
+/**
+ * The custom hook calls open on the way down from the component rendering, outermost first. Components render one at a
+ * time and run their hooks synchronously, so while a hook runs this holds only the calls that led to it.
+ */
+const hookCallChain: string[] = [];
+
+registerTestReset(() => {
+  hookCallChain.length = 0;
+});
+
+/** Marks a custom hook call a component makes. Starts the chain afresh, so a render that threw mid-hook cannot leave it stale. */
+export function enterComponentHookCall(callSite: string) {
+  if (!getIsRestorationEnabled()) return;
+  hookCallChain.length = 0;
+  hookCallChain.push(callSite);
+}
+
+/** Marks a custom hook call another hook makes. */
+export function enterHookCall(callSite: string) {
+  if (getIsRestorationEnabled()) hookCallChain.push(callSite);
+}
+
+/** Closes the call the last `enter` opened, and passes the hook's result through. */
+export function exitHookCall<T>(value: T): T {
+  if (getIsRestorationEnabled()) hookCallChain.pop();
+  return value;
+}
+
+/** Who is calling the hook rendering now, or null when nothing the transform marked is: called from untransformed code. */
+function currentHookCaller() {
+  return hookCallChain.length > 0 ? hookCallChain.join('>') : null;
+}
+
+/** `keyId` is what the frame is stored under within its scope; null, it never restores. */
+function useLiveRestorationFrame(frameId: string, keyId: string | null): RestorationFrameApi {
   'use no memo';
 
   const scope = useRestorationScope();
   const hiddenNode = useRestorationHiddenNode();
-  const key = scope.startsWith(UNANCHORED_SCOPE_PREFIX) ? null : `${scope}|${frameId}`;
-  const [frame] = useState(() => new RestorationFrame(frameId, key));
+  const key = keyId === null || scope.startsWith(UNANCHORED_SCOPE_PREFIX) ? null : `${scope}|${keyId}`;
+  const claimant = useId();
+  const [frame] = useState(() => new RestorationFrame(frameId, key, claimant));
   frame.key = key;
 
   useEffect(() => {
@@ -419,7 +459,23 @@ export function useRestorationFrame(frameId: string): RestorationFrameApi {
 
   if (!getIsRestorationEnabled()) return INERT_FRAME;
   // eslint-disable-next-line react-hooks/rules-of-hooks -- the condition is fixed for the life of the process
-  return useLiveRestorationFrame(frameId);
+  return useLiveRestorationFrame(frameId, frameId);
+}
+
+/**
+ * The frame the transform injects into a custom hook. Keyed by the calls that led to it from the component rendering,
+ * so its state belongs to that component and that call site rather than following the hook into whichever component
+ * calls it next.
+ */
+export function useHookRestorationFrame(frameId: string): RestorationFrameApi {
+  'use no memo';
+
+  if (!getIsRestorationEnabled()) return INERT_FRAME;
+  // The path to a hook is fixed for the life of its instance, so it is read once rather than joined on every render.
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- the condition is fixed for the life of the process
+  const [caller] = useState(currentHookCaller);
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- the condition is fixed for the life of the process
+  return useLiveRestorationFrame(frameId, caller === null ? null : `${caller}>${frameId}`);
 }
 
 /** What the transform emits for a component with a single `useState`. */

@@ -40,7 +40,7 @@ export function configureRestorationScope(useScope: () => string) {
   useConfiguredScope = useScope;
 }
 
-export const restorationCounters = { manualRestored: 0, manualMissed: 0, pruned: 0 };
+export const restorationCounters = { manualRestored: 0, manualMissed: 0, pruned: 0, refusedClaimed: 0 };
 
 /**
  * Whether restoration reports anything to the console. Off by default: a refusal is the layer declining to restore
@@ -111,6 +111,28 @@ export function getRestorationGeneration(key: string) {
 export function readRestorable<T>(store: Map<string, RestorableEntry<T>>, key: string) {
   const entry = store.get(key);
   if (!entry || entry.generation >= getRestorationGeneration(key)) return undefined;
+  return entry;
+}
+
+/** Which instance each stored value has been handed to. Per entry, so a newly written value starts unclaimed. */
+const claims = new WeakMap<RestorableEntry, string>();
+
+/**
+ * `readRestorable` for a value only one instance may take: siblings mounting in the same commit all read during render,
+ * before any of them can register as a holder, so the first to ask keeps it and the rest start fresh. `claimant` must be
+ * stable for one instance across a repeated render of its mount, as `useId()` is.
+ */
+export function claimRestorable<T>(store: Map<string, RestorableEntry<T>>, key: string, claimant: string) {
+  const entry = readRestorable(store, key);
+  if (!entry) return undefined;
+
+  const holder = claims.get(entry);
+  if (holder !== undefined && holder !== claimant) {
+    restorationCounters.refusedClaimed += 1;
+    reportRestorationOnce('contended', `claimed:${key}`, () => `[restore-contended] already claimed key=${key}`);
+    return undefined;
+  }
+  claims.set(entry, claimant);
   return entry;
 }
 

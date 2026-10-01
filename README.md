@@ -21,7 +21,7 @@ the state with it. This keeps the small part a user notices, and only that.
 | **root** | the tree an eviction unmounts as a whole: a bottom tab, say. `markEvicted` and `forgetRestorableState` take a root key |
 | **anchor** | the place inside a root whose departure makes its state stale: the route in a tab's own stack. `pruneRestorableState` judges by it |
 | **eviction** | unmounting a root to release it, marked with `markEvicted` before its cleanups run. **Only an eviction carries state over**: a closed sheet, a changed `key` or any other remount starts fresh |
-| **frame** | what the Babel plugin gives each function that calls a state hook. It hands each hook its restored initial value on the way back, records what it rendered, and snapshots it once, as the root is evicted |
+| **frame** | what the Babel plugin gives each function that calls a state hook. It hands each hook its restored initial value on the way back, records what it rendered, and snapshots it once, as the root is evicted. A custom hook's frame is keyed by the call sites that led to it from the component rendering, so its state belongs to that component and that call |
 
 ## What is kept
 
@@ -29,11 +29,14 @@ Values are held by reference, never serialized, so "restorable" means safe and c
 
 - **Kept:** primitives, arrays, `Set`, `Map` and plain objects, up to 256 nodes. A plain object keeps its restorable
   fields and rebuilds the rest from the initial value, so one `Animated.Value` does not cost the selections beside it.
+  Only over an initial value that is itself a plain object: over `null`, the kept fields would come back as an object
+  missing the rest, so the slot starts fresh instead.
 - **Dropped:** functions, class instances, React elements, and anything larger — which is what keeps this from
   retaining the handles and payloads the eviction exists to release.
 - **Refused:** a key held by two live instances at once, such as a row a list renders many times from one call site.
   Neither is the one that left the value, so neither gets it. Wrap each in a `RestorationNamespace` to tell them apart;
-  the scroll wrapper does this per row from the list's `keyExtractor`.
+  the scroll wrapper does this per row from the list's `keyExtractor`. A value left by one instance and read by several
+  mounting together goes to the first of them only, since they all read it before any can be seen holding the key.
 
 A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Activity>` in a
 `RestorationHiddenBoundary` so a hidden subtree keeps its value across an eviction.
@@ -42,7 +45,7 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.5.1-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.6.0-gitpkg"
 ```
 
 ## Setup
@@ -55,13 +58,17 @@ plugins: [
   'babel-plugin-react-compiler',
   ['@sleeperhq/react-restorable/babel', {
     include: ['/app/src/'],                        // only files under here
-    helperHooks: { useMergeState: 'hook_helper' }, // other hooks that take an initial value, by import source
+    helperHooks: { useMergeState: 'shared/hooks' }, // hooks outside `include` that take an initial value, by import source
     scrollables: { root: 'AppScrollable' },        // tag <AppScrollable.FlatList /> and friends with an id
   }],
 ],
 ```
 
-Opt a call out with `// @no-restore` on its line or the line above. A file that imports `useRestorableState` is left
+Each custom hook call is marked with its call site (`enterComponentHookCall` from a component, `enterHookCall` from a
+hook, closed by `exitHookCall`), so a hook's frame knows which component and call it belongs to. Components render one
+at a time and run their hooks synchronously, which is what makes a chain of open calls meaningful. A hook reached from
+code the transform does not rewrite finds no chain and does not restore. `helperHooks` is only needed for a hook
+defined outside the rewritten tree. Opt a call out with `// @no-restore` on its line or the line above. A file that imports `useRestorableState` is left
 alone, on the grounds that it manages its own restoration; importing anything else from the package does not count.
 
 **2. Once, before anything renders**, because frames call hooks only while restoration is on:
@@ -139,7 +146,11 @@ export const ScrollView = withScrollRestoration(BaseScrollView, 'scrollTo');
 ```
 
 A plain scroll view is created at its offset. A virtualized list holds its first paint off screen until its content
-is long enough to scroll to the offset, then applies it.
+less its viewport reaches the offset, then applies it; content that stops short gets what it can before the reveal.
+A restore that has not landed 3 seconds after the mount is abandoned rather than jump under a user already reading.
+
+The offset is followed through drag and momentum ends, and through `onScroll` where that costs nothing: always on a
+virtualized list, which listens anyway, and on a plain scroll view only when the call site already passes a handler.
 
 ## API
 
@@ -147,6 +158,7 @@ is long enough to scroll to the offset, then applies it.
 | --- | --- |
 | `useRestorableState(id, initial)` | explicit restoration for one value, `id` unique within its scope; what the transform does implicitly |
 | `useRestorationFrame(id)` / `useAutoState(id, initial)` | the frame the transform injects, and its single-`useState` form |
+| `useHookRestorationFrame(id)`, `enterComponentHookCall` / `enterHookCall` / `exitHookCall` | a custom hook's frame, and the call-site marks that key it to its caller |
 | `RestorationNamespace` | tells apart sibling renders of one component |
 | `RestorationHiddenBoundary` | marks a subtree an `<Activity>` hides |
 | `<Evictable>`, `<EvictionGate>`, `useIsEvicted()` | an evictable root, and what unmounts inside one whose children stay mounted |
