@@ -1,18 +1,18 @@
 # `@sleeperhq/react-restorable`
 
-Brings a screen's state back after it was unmounted to free memory. When the screen is rebuilt, its `useState` values
-and scroll positions are where the user left them.
+Saves the state of a component tree in memory when it unmounts, and puts it back when it mounts again.
 
 ```tsx
-// Written as usual. The Babel plugin makes it restorable.
-const [position, setPosition] = useState('ALL');
+<Evictable rootKey={tabKey} evict={!isFocused} expireAfterMs={5 * 60 * 1000}>
+  <TabContent />
+</Evictable>
 ```
 
-Keeping a hidden screen mounted (`react-freeze`, `<Activity>`) holds on to everything it uses: views, closures,
-fetched data. Unmounting frees all of that but loses the state too. This package keeps just the state.
+When `evict` turns on, `<TabContent />` unmounts and its `useState` values and scroll positions are saved. When it
+turns off, the tree mounts again where the user left it. The components inside don't change: the Babel plugin makes
+their `useState` calls restorable.
 
-State only comes back after an eviction (see `<Evictable>` below). Closing a sheet, changing a `key` or any other
-remount starts fresh.
+Only this unmount saves state. Closing a sheet, changing a `key` or any other unmount starts fresh.
 
 ## Install
 
@@ -146,11 +146,3 @@ Values are held in memory, not serialized.
 | `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
 | `…/babel` | the Babel plugin |
 | `…/testing` | seeding and resetting state in your own tests |
-
-## Publishing
-
-`lib/` is committed, because consumers install without running scripts. A change to `src/` ships only after
-`yarn build`, a commit of the output and a new tag.
-
-Each entry is declared twice, in `exports` and as a stub `package.json` folder, because TypeScript and Metro don't
-read `exports`.
