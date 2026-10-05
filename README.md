@@ -1,45 +1,18 @@
 # `@sleeperhq/react-restorable`
 
-State that survives its tree being unmounted. When a screen you left is evicted — unmounted to give its memory
-back — and later rebuilt, its components' `useState` values and its lists' scroll positions come back as you left
-them.
+Brings a screen's state back after it was unmounted to free memory. When the screen is rebuilt, its `useState` values
+and scroll positions are where the user left them.
 
 ```tsx
 // Written as usual. The Babel plugin makes it restorable.
 const [position, setPosition] = useState('ALL');
 ```
 
-Keeping a hidden screen mounted (`react-freeze`, `<Activity>`) keeps everything — fibers, native views,
-closures, fetched payloads — which is exactly the memory you wanted back. Unmounting releases all of it and loses
-the state with it. This keeps the small part a user notices, and only that.
+Keeping a hidden screen mounted (`react-freeze`, `<Activity>`) holds on to everything it uses: views, closures,
+fetched data. Unmounting frees all of that but loses the state too. This package keeps just the state.
 
-## Concepts
-
-| term | what it is |
-| --- | --- |
-| **scope** | where a component sits, as `root\|anchor\|…`. It comes from a scope hook you configure, such as `useReactNavigationRestorationScope`. A scope starting `unanchored\|` never restores |
-| **root** | the tree an eviction unmounts as a whole: a bottom tab, say. `markEvicted` and `forgetRestorableState` take a root key |
-| **anchor** | the place inside a root whose departure makes its state stale: the route in a tab's own stack. `pruneRestorableState` judges by it |
-| **eviction** | unmounting a root to release it, marked with `markEvicted` before its cleanups run. **Only an eviction carries state over**: a closed sheet, a changed `key` or any other remount starts fresh |
-| **frame** | what the Babel plugin gives each function that calls a state hook. It hands each hook its restored initial value on the way back, records what it rendered, and snapshots it once, as the root is evicted. A custom hook's frame is keyed by the call sites that led to it from the component rendering, so its state belongs to that component and that call |
-
-## What is kept
-
-Values are held by reference, never serialized, so "restorable" means safe and cheap to hold:
-
-- **Kept:** primitives, arrays, `Set`, `Map` and plain objects, up to 256 nodes. A plain object keeps its restorable
-  fields and rebuilds the rest from the initial value, so one `Animated.Value` does not cost the selections beside it.
-  Only over an initial value that is itself a plain object: over `null`, the kept fields would come back as an object
-  missing the rest, so the slot starts fresh instead.
-- **Dropped:** functions, class instances, React elements, and anything larger — which is what keeps this from
-  retaining the handles and payloads the eviction exists to release.
-- **Refused:** a key held by two live instances at once, such as a row a list renders many times from one call site.
-  Neither is the one that left the value, so neither gets it. Wrap each in a `RestorationNamespace` to tell them apart;
-  the scroll wrapper does this per row from the list's `keyExtractor`. A value left by one instance and read by several
-  mounting together goes to the first of them only, since they all read it before any can be seen holding the key.
-
-A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Activity>` in a
-`RestorationHiddenBoundary` so a hidden subtree keeps its value across an eviction.
+State only comes back after an eviction (see `<Evictable>` below). Closing a sheet, changing a `key` or any other
+remount starts fresh.
 
 ## Install
 
@@ -50,28 +23,30 @@ A subtree an `<Activity>` hides runs its cleanups as if unmounted. Wrap the `<Ac
 
 ## Setup
 
-**1. The transform**, after React Compiler, which has to see the plain `useState`:
+### 1. Add the Babel plugin
+
+Put it after the React Compiler, which needs to see the plain `useState`:
 
 ```js
 // babel.config.js
 plugins: [
   'babel-plugin-react-compiler',
   ['@sleeperhq/react-restorable/babel', {
-    include: ['/app/src/'],                        // only files under here
-    helperHooks: { useMergeState: 'shared/hooks' }, // hooks outside `include` that take an initial value, by import source
-    scrollables: { root: 'AppScrollable' },        // tag <AppScrollable.FlatList /> and friends with an id
+    include: ['/app/src/'],
+    helperHooks: { useMergeState: 'shared/hooks' },
+    scrollables: { root: 'AppScrollable' },
   }],
 ],
 ```
 
-Each custom hook call is marked with its call site (`enterComponentHookCall` from a component, `enterHookCall` from a
-hook, closed by `exitHookCall`), so a hook's frame knows which component and call it belongs to. Components render one
-at a time and run their hooks synchronously, which is what makes a chain of open calls meaningful. A hook reached from
-code the transform does not rewrite finds no chain and does not restore. `helperHooks` is only needed for a hook
-defined outside the rewritten tree. Opt a call out with `// @no-restore` on its line or the line above. A file that imports `useRestorableState` is left
-alone, on the grounds that it manages its own restoration; importing anything else from the package does not count.
+- `include`: only files under these paths are rewritten.
+- `helperHooks`: hooks defined outside `include` that take an initial value, as hook name to import path.
+- `scrollables`: tags `<AppScrollable.FlatList />` and the like so their scroll position can be restored.
 
-**2. Once, before anything renders**, because frames call hooks only while restoration is on:
+To opt a call out, put `// @no-restore` on its line or the line above. Files that import `useRestorableState` are
+skipped, since they handle restoration themselves.
+
+### 2. Configure it once, before the first render
 
 ```ts
 import { configureRestorationScope, setRestorationEnabled } from '@sleeperhq/react-restorable';
@@ -81,62 +56,34 @@ configureRestorationScope(useReactNavigationRestorationScope);
 setRestorationEnabled(readYourFlagOnce());
 ```
 
-Off, a frame calls no hooks and hands each hook its own argument back, so the transform costs close to nothing.
+With restoration off, the rewritten code passes each value straight through and costs almost nothing.
 
-**3. Where you evict**, wrap the root's content:
+### 3. Wrap what you evict
 
 ```tsx
 import { Evictable } from '@sleeperhq/react-restorable/react-native';
 
 <Evictable
   rootKey={tabKey}
-  evict={isLeaving}                  // whether the root should go
-  expireAfterMs={5 * 60 * 1000}      // how long an evicted root keeps what it left
+  evict={isLeaving}
+  expireAfterMs={5 * 60 * 1000}
   shouldKeep={() => isParkedMidTask} // optional: keep state past the expiry
-  expireOnBackground                 // optional: expire at once when the app backgrounds while evicted
+  expireOnBackground                 // optional: drop state as soon as the app backgrounds
 >
   <TabContent />
 </Evictable>
 ```
 
-It unmounts its children while evicted and marks the eviction as they go, in the layout phase, before their
-cleanups: that is how they tell an eviction from a removal. The expiry is checked on the way back in as well as on a
-timer, since timers do not run while the app is backgrounded.
+`<Evictable>` unmounts its children while `evict` is true and gives their state back when they return. State is
+dropped after `expireAfterMs`.
 
-**When the children must stay mounted** — a navigator, whose state goes with it — pass `unmountChildren={false}` and
-unmount the content deeper down with `<EvictionGate>`, or with `useIsEvicted()` in a component that already decides
-whether its content renders. In development, an `<Evictable>` evicted with nothing inside reading it warns, because
-nothing unmounted.
+If the children have to stay mounted, like a navigator that loses its state on unmount, pass `unmountChildren={false}`
+and unmount the content further down with `<EvictionGate>` or `useIsEvicted()`.
 
-`useEvictionLifecycle` is the same lifecycle as a hook, for a host that renders its own view and overlay; it returns
-`isEvicted`, which is what to unmount on. `markEvicted` and `forgetRestorableState` are the pieces underneath.
+In a tab navigator, call `usePruneRestorableState(state)` from `/react-navigation` to drop the state of routes the user
+has left.
 
-`expireOnBackground` expires an evicted root the moment the app goes to the background, rather than waiting out
-`expireAfterMs`, since that is when the OS wants memory back. `inactive` does not count, so a transient blur keeps
-what the root left. The hook returns the same as `expire()`, for a trigger of the host's own.
-
-Drop what has gone stale as navigation moves with `usePruneRestorableState(tabNavigatorState)`, from
-`./react-navigation`, in the tab navigator.
-
-**4. Optionally, a picture over the rebuild.** Experimental. Restored state lands the tree where it was left, but it
-still has to render, so the root can be photographed on the way out and covered with the picture while it rebuilds:
-
-```tsx
-// once, at launch
-configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
-
-// where you evict: `place` is where in the root the picture is taken — for a tab, the route its state is anchored to
-<Evictable rootKey={tab.key} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: getAnchorRouteKey(tab) }}>
-```
-
-`<Evictable>` photographs the view holding its children and draws the picture over them, in place for the whole
-eviction, since a switch that animates on the UI thread starts before a newly mounted image paints. The picture is this
-eviction's, never an older one, and never one of a place the root has since left; it holds for 600ms after the return,
-and goes with the rest of the root's state at the expiry. Capture is injected, so the package takes no native
-dependency for it — the example uses `react-native-view-shot`. `discardRestorationSnapshots(root)` drops a root's
-pictures by hand.
-
-**5. Scroll positions**, by wrapping each scrollable once:
+### 4. Restore scroll positions
 
 ```ts
 import { withScrollRestoration } from '@sleeperhq/react-restorable/react-native';
@@ -145,40 +92,65 @@ export const FlatList = withScrollRestoration(BaseFlatList, 'scrollToOffset');
 export const ScrollView = withScrollRestoration(BaseScrollView, 'scrollTo');
 ```
 
-A plain scroll view is created at its offset. A virtualized list holds its first paint off screen until its content
-less its viewport reaches the offset, then applies it; content that stops short gets what it can before the reveal.
-A restore that has not landed 3 seconds after the mount is abandoned rather than jump under a user already reading.
+A list is hidden until it reaches its old offset. If it can't get there within 3 seconds, it shows where it is rather
+than jump while the user is reading.
 
-The offset is followed through drag and momentum ends, and through `onScroll` where that costs nothing: always on a
-virtualized list, which listens anyway, and on a plain scroll view only when the call site already passes a handler.
+### 5. Optional: show a snapshot while it rebuilds
+
+Experimental. The root is photographed as it's evicted, and the picture covers it while it re-renders on return:
+
+```tsx
+// once, at launch
+configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
+
+// `place` is where the picture belongs; for a tab, the route its state is anchored to
+<Evictable rootKey={tab.key} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: getAnchorRouteKey(tab) }}>
+```
+
+The picture stays up for 600ms after the return and expires with the rest of the state. You supply the capture
+function, so the package has no native dependency.
+
+## What gets kept
+
+Values are held in memory, not serialized.
+
+- **Kept:** primitives, arrays, `Set`, `Map` and plain objects, up to 256 nodes. When the initial value is a plain
+  object, fields that can't be kept are rebuilt from it.
+- **Not kept:** functions, class instances, React elements and anything larger. Those are what eviction is meant to
+  free.
+- **Repeated components:** two mounted copies at the same call site, such as list rows, can't tell whose value it is,
+  so neither gets it. Wrap each in a `RestorationNamespace`. The scroll wrapper already does this for list rows.
+- **`<Activity>`:** it runs cleanups when it hides a subtree. Wrap it in a `RestorationHiddenBoundary` to keep the
+  hidden subtree's state.
 
 ## API
 
-| export | what it is for |
+| export | use |
 | --- | --- |
-| `useRestorableState(id, initial)` | explicit restoration for one value, `id` unique within its scope; what the transform does implicitly |
-| `useRestorationFrame(id)` / `useAutoState(id, initial)` | the frame the transform injects, and its single-`useState` form |
-| `useHookRestorationFrame(id)`, `enterComponentHookCall` / `enterHookCall` / `exitHookCall` | a custom hook's frame, and the call-site marks that key it to its caller |
-| `RestorationNamespace` | tells apart sibling renders of one component |
-| `RestorationHiddenBoundary` | marks a subtree an `<Activity>` hides |
-| `<Evictable>`, `<EvictionGate>`, `useIsEvicted()` | an evictable root, and what unmounts inside one whose children stay mounted |
-| `useEvictionLifecycle(root, options)` | when a root's tree unmounts, the eviction mark its state depends on, when what it left is forgotten, and optionally the picture over its rebuild |
-| `configureRestorationSnapshots(capture)`, `discardRestorationSnapshots(root)` | experimental: how pictures are taken and deleted, and dropping a root's pictures by hand |
-| `markEvicted(root)`, `forgetRestorableState(root)`, `pruneRestorableState(liveKeysByRoot)` | the lifetime of what is kept, by hand |
-| `configureRestorationScope(useScope)`, `setRestorationEnabled(on)` | setup, once, before the first render |
-| `getRestorationStats()`, `getRestoredChangedSites()` | what restored, and which call sites brought back something other than their initial value — the measure of whether the transform earns its keep |
-| `setRestorationDebugEnabled(on)`, `reportRestorationStats()` | console reporting of refusals and misses, and a one-line summary with the call sites whose restores mattered — printed on its own each time a root returns |
+| `configureRestorationScope`, `setRestorationEnabled` | setup, once |
+| `<Evictable>`, `<EvictionGate>`, `useIsEvicted()` | evicting a root, and unmounting inside one whose children stay mounted |
+| `useEvictionLifecycle(root, options)` | `<Evictable>` as a hook, for a host that renders its own view |
+| `usePruneRestorableState`, `pruneRestorableState` | dropping state for places the user has left |
+| `markEvicted`, `forgetRestorableState` | managing a root's state by hand |
+| `useRestorableState(id, initial)` | restoring one value explicitly |
+| `RestorationNamespace`, `RestorationHiddenBoundary` | repeated components and `<Activity>`, as above |
+| `withScrollRestoration` | scroll positions |
+| `configureRestorationSnapshots`, `discardRestorationSnapshots` | snapshots (experimental) |
+| `setRestorationDebugEnabled`, `getRestorationStats`, `reportRestorationStats`, `getRestoredChangedSites` | debugging: what restored, what was refused, and which restores changed anything |
+| `useRestorationFrame`, `useAutoState`, `useHookRestorationFrame`, `enterComponentHookCall`, `enterHookCall`, `exitHookCall` | what the Babel plugin inserts; not for direct use |
 
-| entry | holds |
+| entry | contains |
 | --- | --- |
-| `@sleeperhq/react-restorable` | everything above; React only |
-| `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `getAnchorRouteKey`, `computeRestorationScope`, `collectLiveRouteKeys` |
+| `@sleeperhq/react-restorable` | the core; React only |
+| `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `getAnchorRouteKey` and helpers |
 | `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
-| `…/babel` | the transform |
-| `…/testing` | seeding and resetting the stores, for a consumer's own tests |
+| `…/babel` | the Babel plugin |
+| `…/testing` | seeding and resetting state in your own tests |
 
-Each subpath is declared twice — in `exports`, and as a stub `package.json` beside `lib/` — because TypeScript and
-Metro still resolve the way Node did before `exports` existed.
+## Publishing
 
-**`lib/` is committed.** Consumers install with `enableScripts: false`, so a gitpkg install never runs `prepare`;
-a change to `src/` is not published until `yarn build` runs and the output is committed and tagged.
+`lib/` is committed, because consumers install without running scripts. A change to `src/` ships only after
+`yarn build`, a commit of the output and a new tag.
+
+Each entry is declared twice, in `exports` and as a stub `package.json` folder, because TypeScript and Metro don't
+read `exports`.
