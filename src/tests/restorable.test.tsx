@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { act } from 'react-test-renderer';
 import { useAutoState } from '../auto_restorable';
-import { EvictionGate, Evictable, useIsEvicted } from '../react-native/evictable';
+import { EvictionGate, Restorable, useIsEvicted } from '../react-native/restorable';
 import { hasRestorableStateForTests, resetRestorationForTests, seedRestorableStateForTests } from '../restorable_state';
 import { configureRestorationSnapshots, peekSnapshot, resetSnapshotCaptureForTests, seedSnapshotForTests } from '../snapshots';
 import { InTab, Text, render, renderHook } from './render';
@@ -38,12 +38,12 @@ function Draft() {
   return <Text testID="draft">{draft}</Text>;
 }
 
-describe('<Evictable>', () => {
-  const tree = (evict: boolean, props: Partial<React.ComponentProps<typeof Evictable>> = {}) => (
+describe('<Restorable>', () => {
+  const tree = (evict: boolean, props: Partial<React.ComponentProps<typeof Restorable>> = {}) => (
     <InTab>
-      <Evictable rootKey="tab-1" evict={evict} expireAfterMs={EXPIRY_MS} {...props}>
+      <Restorable rootKey="tab-1" evict={evict} expireAfterMs={EXPIRY_MS} {...props}>
         {props.children ?? <Draft />}
-      </Evictable>
+      </Restorable>
     </InTab>
   );
 
@@ -162,10 +162,10 @@ describe('<Evictable>', () => {
 describe('expireOnBackground', () => {
   const SCOPE = 'tab-1|screen-1||';
 
-  const root = (evict: boolean, props: Partial<React.ComponentProps<typeof Evictable>> = {}) => (
-    <Evictable rootKey="tab-1" evict={evict} expireAfterMs={EXPIRY_MS} expireOnBackground {...props}>
+  const root = (evict: boolean, props: Partial<React.ComponentProps<typeof Restorable>> = {}) => (
+    <Restorable rootKey="tab-1" evict={evict} expireAfterMs={EXPIRY_MS} expireOnBackground {...props}>
       <Text testID="content">content</Text>
-    </Evictable>
+    </Restorable>
   );
 
   function seedBoth() {
@@ -237,7 +237,7 @@ describe('expireOnBackground', () => {
 });
 
 describe('useIsEvicted', () => {
-  it('is false outside any <Evictable>', () => {
+  it('is false outside any <Restorable>', () => {
     expect(renderHook(() => useIsEvicted()).result.current).toBe(false);
   });
 });

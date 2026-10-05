@@ -1,4 +1,4 @@
 export { withScrollRestoration } from './scroll_restoration';
-export { EvictionGate, Evictable, useIsEvicted } from './evictable';
-export type { EvictableProps } from './evictable';
+export { EvictionGate, Restorable, useIsEvicted } from './restorable';
+export type { RestorableProps } from './restorable';
 //# sourceMappingURL=index.d.ts.map

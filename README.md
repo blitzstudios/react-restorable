@@ -3,9 +3,9 @@
 Saves the state of a component tree in memory when it unmounts, and puts it back when it mounts again.
 
 ```tsx
-<Evictable rootKey={tabKey} evict={!isFocused} expireAfterMs={5 * 60 * 1000}>
+<Restorable rootKey={tabKey} evict={!isFocused} expireAfterMs={5 * 60 * 1000}>
   <TabContent />
-</Evictable>
+</Restorable>
 ```
 
 When `evict` turns on, `<TabContent />` unmounts and its `useState` values and scroll positions are saved. When it
@@ -18,7 +18,7 @@ Only this unmount saves state. Closing a sheet, changing a `key` or any other un
 
 ```jsonc
 // package.json
-"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.6.1-gitpkg"
+"@sleeperhq/react-restorable": "blitzstudios/react-restorable.git#react-restorable-v0.7.0-gitpkg"
 ```
 
 ## Setup
@@ -61,9 +61,9 @@ With restoration off, the rewritten code passes each value straight through and 
 ### 3. Wrap what you evict
 
 ```tsx
-import { Evictable } from '@sleeperhq/react-restorable/react-native';
+import { Restorable } from '@sleeperhq/react-restorable/react-native';
 
-<Evictable
+<Restorable
   rootKey={tabKey}
   evict={isLeaving}
   expireAfterMs={5 * 60 * 1000}
@@ -71,10 +71,10 @@ import { Evictable } from '@sleeperhq/react-restorable/react-native';
   expireOnBackground                 // optional: drop state as soon as the app backgrounds
 >
   <TabContent />
-</Evictable>
+</Restorable>
 ```
 
-`<Evictable>` unmounts its children while `evict` is true and gives their state back when they return. State is
+`<Restorable>` unmounts its children while `evict` is true and gives their state back when they return. State is
 dropped after `expireAfterMs`.
 
 If the children have to stay mounted, like a navigator that loses its state on unmount, pass `unmountChildren={false}`
@@ -104,7 +104,7 @@ Experimental. The root is photographed as it's evicted, and the picture covers i
 configureRestorationSnapshots({ capture: (view) => captureRef(view, { result: 'tmpfile' }), release: releaseCapture });
 
 // `place` is where the picture belongs; for a tab, the route its state is anchored to
-<Evictable rootKey={tab.key} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: getAnchorRouteKey(tab) }}>
+<Restorable rootKey={tab.key} evict={isLeaving} expireAfterMs={5 * 60 * 1000} snapshot={{ place: getAnchorRouteKey(tab) }}>
 ```
 
 The picture stays up for 600ms after the return and expires with the rest of the state. You supply the capture
@@ -128,8 +128,8 @@ Values are held in memory, not serialized.
 | export | use |
 | --- | --- |
 | `configureRestorationScope`, `setRestorationEnabled` | setup, once |
-| `<Evictable>`, `<EvictionGate>`, `useIsEvicted()` | evicting a root, and unmounting inside one whose children stay mounted |
-| `useEvictionLifecycle(root, options)` | `<Evictable>` as a hook, for a host that renders its own view |
+| `<Restorable>`, `<EvictionGate>`, `useIsEvicted()` | evicting a root, and unmounting inside one whose children stay mounted |
+| `useEvictionLifecycle(root, options)` | `<Restorable>` as a hook, for a host that renders its own view |
 | `usePruneRestorableState`, `pruneRestorableState` | dropping state for places the user has left |
 | `markEvicted`, `forgetRestorableState` | managing a root's state by hand |
 | `useRestorableState(id, initial)` | restoring one value explicitly |
@@ -143,6 +143,6 @@ Values are held in memory, not serialized.
 | --- | --- |
 | `@sleeperhq/react-restorable` | the core; React only |
 | `…/react-navigation` | `useReactNavigationRestorationScope`, `usePruneRestorableState`, `getAnchorRouteKey` and helpers |
-| `…/react-native` | `Evictable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
+| `…/react-native` | `Restorable`, `EvictionGate`, `useIsEvicted`, `withScrollRestoration` |
 | `…/babel` | the Babel plugin |
 | `…/testing` | seeding and resetting state in your own tests |

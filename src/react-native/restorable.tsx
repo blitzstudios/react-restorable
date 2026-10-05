@@ -2,12 +2,12 @@ import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, 
 import { AppState, Image, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { EvictionLifecycleOptions, useEvictionLifecycle } from '../eviction_lifecycle';
 
-/** How many gates read an `<Evictable>`, so one whose children stay mounted can tell when nothing unmounts. */
+/** How many gates read an `<Restorable>`, so one whose children stay mounted can tell when nothing unmounts. */
 type GateRegistry = { count: number; hasWarned: boolean };
 
 const EvictionContext = createContext<{ isEvicted: boolean; registry: GateRegistry | null }>({ isEvicted: false, registry: null });
 
-export type EvictableProps = Omit<EvictionLifecycleOptions, 'snapshot'> & {
+export type RestorableProps = Omit<EvictionLifecycleOptions, 'snapshot'> & {
   rootKey: string;
   /**
    * Off, the children stay mounted through an eviction and something inside unmounts instead, by reading
@@ -31,7 +31,7 @@ export type EvictableProps = Omit<EvictionLifecycleOptions, 'snapshot'> & {
  * A root that can be evicted: its content unmounts while `evict` is on, and comes back as it was left. Owns when the
  * content actually unmounts, the eviction mark its restorable state depends on, the expiry, and the snapshot.
  */
-export function Evictable({ rootKey, unmountChildren = true, snapshot, expireOnBackground = false, style, children, ...options }: EvictableProps) {
+export function Restorable({ rootKey, unmountChildren = true, snapshot, expireOnBackground = false, style, children, ...options }: RestorableProps) {
   const contentRef = useRef<View | null>(null);
   const { isEvicted, snapshotUri, expire } = useEvictionLifecycle(rootKey, {
     ...options,
@@ -52,7 +52,7 @@ export function Evictable({ rootKey, unmountChildren = true, snapshot, expireOnB
     registry.hasWarned = true;
     // eslint-disable-next-line no-console
     console.warn(
-      `[react-restorable] <Evictable rootKey="${rootKey}" unmountChildren={false}> was evicted with nothing inside reading ` +
+      `[react-restorable] <Restorable rootKey="${rootKey}" unmountChildren={false}> was evicted with nothing inside reading ` +
         'useIsEvicted(), so nothing unmounted. Render an <EvictionGate> around what should unmount.',
     );
   }, [isEvicted, unmountChildren, rootKey, registry]);
@@ -74,7 +74,7 @@ export function Evictable({ rootKey, unmountChildren = true, snapshot, expireOnB
   );
 }
 
-/** Whether the nearest `<Evictable>` is evicted: what unmounts the content of one whose children stay mounted. */
+/** Whether the nearest `<Restorable>` is evicted: what unmounts the content of one whose children stay mounted. */
 export function useIsEvicted() {
   const { isEvicted, registry } = useContext(EvictionContext);
   useLayoutEffect(() => {
@@ -87,7 +87,7 @@ export function useIsEvicted() {
   return isEvicted;
 }
 
-/** Renders its children except while the nearest `<Evictable>` is evicted. */
+/** Renders its children except while the nearest `<Restorable>` is evicted. */
 export function EvictionGate({ children }: { children: React.ReactNode }) {
   return useIsEvicted() ? null : <>{children}</>;
 }
